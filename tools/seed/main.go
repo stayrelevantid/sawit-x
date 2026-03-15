@@ -35,6 +35,7 @@ func main() {
 		"Categories!A1:Z100",
 		"Crew!A1:Z100",
 		"X_LOG!A1:Z1000",
+		"X_REKAP!A1:Z100",
 	}
 	rbce := &sheets.BatchClearValuesRequest{Ranges: rangesToClear}
 	_, err = srv.Spreadsheets.Values.BatchClear(spreadsheetID, rbce).Do()
@@ -88,6 +89,17 @@ func main() {
 		},
 	}
 	writeSheet(srv, "X_LOG!A1", logHeaders)
+
+	// 6. Seed X_REKAP Headers
+	fmt.Println("🌱 Seeding X_REKAP Headers...")
+	rekapHeaders := [][]interface{}{
+		{
+			"site_id", "site_name", "total_weight_kg", "gross_income_rp", "opex_rp",
+			"net_profit_rp", "investasi_total_rp", "sisa_modal_rp", "roi_percent", "bep_projection",
+			"total_pinjam", "total_bayar", "outstanding_debt", "last_updated",
+		},
+	}
+	writeSheet(srv, "X_REKAP!A1", rekapHeaders)
 
 	fmt.Println("✅ Data reset and seeding completed successfully!")
 }

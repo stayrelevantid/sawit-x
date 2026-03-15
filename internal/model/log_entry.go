@@ -7,6 +7,7 @@ const (
 	ModulePanen       = "PANEN"
 	ModuleOperasional = "OPERASIONAL"
 	ModulePiutang     = "PIUTANG"
+	ModuleInvestasi   = "INVESTASI"
 )
 
 type LogEntry struct {

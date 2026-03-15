@@ -152,6 +152,25 @@ Gross: Rp3.000.000
 Net:   Rp2.750.000
 ```
 
+3. Response Slack: **Clear modal** (modal tertutup otomatis).
+4. Bot mengirimkan **Pesan Konfirmasi (Success DM)** ke user berisi ringkasan data yang baru dimasukkan + perhitungan otomatisnya.
+
+---
+
+### Step 7 — Rekap Performa (`view_report` action)
+
+*(Muncul jika user memilih "Lihat Rekap" di Modal 2)*
+
+**Output 1: Modal Dashboard**
+- Header: *"Kebun: [Nama Kebun]"*
+- **Seksi Panen**: Total Berat (Kg), Gross Income, Total Upah, Total Transport.
+- **Seksi Operasional**: Biaya Ops (dari modul Operasional).
+- **Seksi Financials**: Net Profit, ROI Tracking.
+- **Seksi Piutang**: Total Pinjam, Total Bayar, Utang Beredar.
+
+**Output 2: Slack Message**
+Bot mengirimkan pesan (DM) ke user dengan ringkasan yang sama sebagai arsip/history di chat.
+
 ---
 
 ## 3. Skema Callback Modal
@@ -171,10 +190,13 @@ module_selection_modal    ← Pilih Modul
     ├── OPERASIONAL ──▶ operasional_entry_modal
     │                        └── WriteLog (X_LOG)
     │
-    └── PIUTANG    ──▶ piutang_crew_select_modal
-                             │  GetCrewBalance (X_LOG)
-                             ▼
-                        piutang_action_modal
+    ├── PIUTANG    ──▶ piutang_crew_select_modal
+    │                        │  GetCrewBalance (X_LOG)
+    │                        ▼
+    │                   piutang_action_modal
+    │                        └── WriteLog (X_LOG)
+    │
+    └── INVESTASI  ──▶ investasi_entry_modal
                              └── WriteLog (X_LOG)
 ```
 

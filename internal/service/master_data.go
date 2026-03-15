@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/indragiri/sawit-x/internal/client"
 	"github.com/indragiri/sawit-x/internal/model"
@@ -27,26 +30,82 @@ func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, e
 	}
 
 	var sites []model.Site
-	for _, row := range rows {
-		if len(row) < 5 {
+	for i, row := range rows {
+		if len(row) < 2 { // Min id and name
 			continue
 		}
-		status := fmt.Sprintf("%v", row[3])
+		
+		id := fmt.Sprintf("%v", row[0])
+		name := fmt.Sprintf("%v", row[1])
+		
+		status := "INACTIVE"
+		if len(row) >= 4 {
+			status = fmt.Sprintf("%v", row[3])
+		}
+		
 		if status != "ACTIVE" {
 			continue
 		}
 
-		targetModal, _ := strconv.ParseInt(fmt.Sprintf("%v", row[4]), 10, 64)
+		var targetModal int64
+		if len(row) >= 5 {
+			val := fmt.Sprintf("%v", row[4])
+			val = strings.ReplaceAll(val, ".", "")
+			val = strings.ReplaceAll(val, ",", "")
+			targetModal, _ = strconv.ParseInt(val, 10, 64)
+		}
+
+		log.Printf("[MASTER] Loaded active site: %s (%s), Target: %d", name, id, targetModal)
 
 		sites = append(sites, model.Site{
-			ID:          fmt.Sprintf("%v", row[0]),
-			Name:        fmt.Sprintf("%v", row[1]),
-			Location:    fmt.Sprintf("%v", row[2]),
+			ID:          id,
+			Name:        name,
+			Location:    func() string { if len(row) >= 3 { return fmt.Sprintf("%v", row[2]) }; return "" }(),
 			Status:      status,
 			TargetModal: targetModal,
 		})
+		_ = i // future use
 	}
 	return sites, nil
+}
+
+func (s *MasterDataService) GetSiteByID(ctx context.Context, siteID string) (model.Site, error) {
+	sites, err := s.GetActiveSites(ctx)
+	if err != nil {
+		return model.Site{}, err
+	}
+	for _, site := range sites {
+		if site.ID == siteID {
+			return site, nil
+		}
+	}
+	return model.Site{}, fmt.Errorf("site %s not found", siteID)
+}
+
+// UpdateSiteTarget updates the TargetModal for a specific site in the Sites sheet.
+func (s *MasterDataService) UpdateSiteTarget(ctx context.Context, siteID string, target int64) error {
+	log.Printf("[MASTER] Updating target for site %s to %d", siteID, target)
+	rows, err := s.sheetsClient.ReadSpreadsheet("Sites!A2:A")
+	if err != nil {
+		log.Printf("[MASTER] Error reading Sites sheet: %v", err)
+		return err
+	}
+
+	for i, row := range rows {
+		if len(row) > 0 && fmt.Sprintf("%v", row[0]) == siteID {
+			// Row index in sheet is i+2 (because of A2 start)
+			cellRange := fmt.Sprintf("Sites!E%d", i+2)
+			log.Printf("[MASTER] Found site %s at row %d. Updating range %s", siteID, i+2, cellRange)
+			err := s.sheetsClient.UpdateCell(cellRange, target)
+			if err != nil {
+				log.Printf("[MASTER] Error updating cell %s: %v", cellRange, err)
+			}
+			return err
+		}
+	}
+
+	log.Printf("[MASTER] Site %s not found in A2:A range", siteID)
+	return fmt.Errorf("site %s not found", siteID)
 }
 
 func (s *MasterDataService) GetActiveCategories(ctx context.Context) ([]model.Category, error) {
@@ -194,17 +253,129 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 
 				report.TotalWeight += weight
 				report.GrossIncome += amountRaw
+				report.TotalUpah += labor
+				report.TotalTransport += transport
 				report.OperationalCost += (labor + transport)
 			}
 		case "OPERASIONAL":
+			report.TotalOperasional += amountRaw
 			report.OperationalCost += amountRaw
+		case "PIUTANG":
+			catID := fmt.Sprintf("%v", row[6])
+			if catID == "PINJAM" {
+				report.TotalPinjam += amountRaw
+			} else if catID == "BAYAR" {
+				report.TotalBayar += amountRaw
+			}
+		case "INVESTASI":
+			report.TargetModal += amountRaw
 		}
 	}
 
+	report.OutstandingDebt = report.TotalPinjam - report.TotalBayar
+
 	report.NetProfit = report.GrossIncome - report.OperationalCost
+	report.RemainingCapital = targetModal - report.NetProfit
+	if report.RemainingCapital < 0 {
+		report.RemainingCapital = 0
+	}
+
 	if targetModal > 0 {
 		report.ROITracking = (float64(report.NetProfit) / float64(targetModal)) * 100
 	}
 
+	// 5. Calculate BEP Projection
+	var firstDate, lastDate time.Time
+	for _, row := range rows {
+		if len(row) < 3 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		if rowSiteID != siteID {
+			continue
+		}
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+		if !eventDate.IsZero() {
+			if firstDate.IsZero() || eventDate.Before(firstDate) {
+				firstDate = eventDate
+			}
+			if eventDate.After(lastDate) {
+				lastDate = eventDate
+			}
+		}
+	}
+
+	if !firstDate.IsZero() && !lastDate.IsZero() {
+		// Use months span
+		days := lastDate.Sub(firstDate).Hours() / 24
+		if days < 30 {
+			days = 30 // Minimum 1 month for average
+		}
+		avgDailyProfit := float64(report.NetProfit) / days
+		avgMonthlyProfit := avgDailyProfit * 30.44
+
+		if report.RemainingCapital > 0 && avgMonthlyProfit > 0 {
+			monthsRemaining := float64(report.RemainingCapital) / avgMonthlyProfit
+			if monthsRemaining > 12 {
+				report.BEPProjection = fmt.Sprintf("Estimasi %.1f tahun lagi", monthsRemaining/12)
+			} else {
+				report.BEPProjection = fmt.Sprintf("Estimasi %.1f bulan lagi", monthsRemaining)
+			}
+		} else if report.RemainingCapital <= 0 && targetModal > 0 {
+			report.BEPProjection = "SUDAH BALIK MODAL (BEP) ✅"
+		} else {
+			report.BEPProjection = "Data belum mencukupi untuk estimasi"
+		}
+	} else {
+		report.BEPProjection = "Belum ada data transaksi"
+	}
+
 	return report, nil
+}
+
+// SyncSiteReportToSheet writes the SiteReport to the X_REKAP tab.
+func (s *MasterDataService) SyncSiteReportToSheet(ctx context.Context, siteID string, siteName string, report model.SiteReport) error {
+	log.Printf("[REKAP] Syncing report for site %s to X_REKAP", siteID)
+
+	// Range: X_REKAP!A2:A -> site_id is in col A
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_REKAP!A2:A")
+	if err != nil {
+		// If sheet doesn't exist or error reading, we'll try to find row index or append
+		log.Printf("[REKAP] Warning: Could not read X_REKAP sheet: %v", err)
+	}
+
+	rowIndex := -1
+	for i, row := range rows {
+		if len(row) > 0 && fmt.Sprintf("%v", row[0]) == siteID {
+			rowIndex = i + 2
+			break
+		}
+	}
+
+	values := []interface{}{
+		siteID,
+		siteName,
+		report.TotalWeight,
+		report.GrossIncome,
+		report.OperationalCost,
+		report.NetProfit,
+		report.TargetModal,
+		report.RemainingCapital,
+		fmt.Sprintf("%.2f%%", report.ROITracking),
+		report.BEPProjection,
+		report.TotalPinjam,
+		report.TotalBayar,
+		report.OutstandingDebt,
+		time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	if rowIndex != -1 {
+		// Update existing row
+		rangeName := fmt.Sprintf("X_REKAP!A%d", rowIndex)
+		return s.sheetsClient.UpdateRange(rangeName, [][]interface{}{values})
+	}
+
+	// Append new row if not found
+	return s.sheetsClient.AppendRow("X_REKAP", values)
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/indragiri/sawit-x/internal/model"
@@ -85,13 +86,14 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 	}
 }
 
-// BuildModuleSelectionModal builds the second modal for choosing a module (Panen/Operasional/Piutang).
+// BuildModuleSelectionModal builds the second modal for choosing a module.
 func (s *UIService) BuildModuleSelectionModal(state model.TransactionState) slack.ModalViewRequest {
 	stateJSON, _ := json.Marshal(state)
 
-	panenOption := slack.NewOptionBlockObject("PANEN", txt("🌾 Panen"), txt("Catat hasil panen dan biaya logistik"))
-	opsOption := slack.NewOptionBlockObject("OPERASIONAL", txt("💰 Operasional"), txt("Catat pengeluaran kebun"))
-	piutangOption := slack.NewOptionBlockObject("PIUTANG", txt("📋 Piutang"), txt("Kelola pinjaman pegawai"))
+	panenOption := slack.NewOptionBlockObject(model.ModulePanen, txt("🌾 Panen"), txt("Catat hasil panen dan biaya logistik"))
+	opsOption := slack.NewOptionBlockObject(model.ModuleOperasional, txt("💰 Operasional"), txt("Catat pengeluaran kebun"))
+	piutangOption := slack.NewOptionBlockObject(model.ModulePiutang, txt("📋 Piutang"), txt("Kelola pinjaman pegawai"))
+	investasiOption := slack.NewOptionBlockObject(model.ModuleInvestasi, txt("🚀 Investasi"), txt("Catat modal balik / pembelian lahan"))
 
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
@@ -112,9 +114,59 @@ func (s *UIService) BuildModuleSelectionModal(state model.TransactionState) slac
 						slack.OptTypeStatic,
 						txt("Pilih modul..."),
 						"module_type",
-						panenOption, opsOption, piutangOption,
+						panenOption, opsOption, piutangOption, investasiOption,
 					),
 				),
+			},
+		},
+	}
+}
+
+// BuildInvestasiModal builds the Investasi module modal.
+func (s *UIService) BuildInvestasiModal(state model.TransactionState, currentTarget int64) slack.ModalViewRequest {
+	stateJSON, _ := json.Marshal(state)
+
+	today := time.Now().Format("2006-01-02")
+	datePicker := slack.NewDatePickerBlockElement("event_date")
+	datePicker.InitialDate = today
+
+	amountInput := slack.NewPlainTextInputBlockElement(txt("Contoh: 200000000"), "amount_raw")
+	if currentTarget > 0 {
+		amountInput.InitialValue = strconv.FormatInt(currentTarget, 10)
+	}
+
+	title := "🚀 Set Modal Awal"
+	if currentTarget > 0 {
+		title = "🚀 Update Investasi"
+	}
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt(title),
+		Close:           txt("Kembali"),
+		Submit:          txt("Simpan"),
+		CallbackID:      "investasi_entry_modal",
+		PrivateMetadata: string(stateJSON),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt(fmt.Sprintf("Investasi — %s", state.SiteName))),
+				slack.NewInputBlock("date_block", txt("Tanggal"), nil, datePicker),
+				slack.NewInputBlock(
+					"amount_block",
+					txt("Nominal Modal (Rp)"),
+					nil,
+					amountInput,
+				),
+				func() *slack.InputBlock {
+					b := slack.NewInputBlock(
+						"notes_block",
+						txt("Keterangan"),
+						nil,
+						slack.NewPlainTextInputBlockElement(txt(`Misal: "Beli Lahan 2 Ha"`), "notes"),
+					)
+					b.Optional = true
+					return b
+				}(),
 			},
 		},
 	}
@@ -370,12 +422,20 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 			entry.Weight, formatRupiah(entry.UnitPrice), formatRupiah(entry.AmountRaw),
 			formatRupiah(entry.LaborCost), formatRupiah(entry.TransportCost), formatRupiah(entry.AmountFinal))
 	case model.ModuleOperasional:
-		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*PJ:* %s\n*Nominal:* Rp%s",
-			entry.SiteName, entry.CategoryName, entry.CrewName, formatRupiah(entry.AmountRaw))
+		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*PJ:* %s\n*Nominal:* Rp%s\n*Keterangan:* %s",
+			entry.SiteName, entry.CategoryName, entry.CrewName, formatRupiah(entry.AmountRaw), entry.Notes)
 	case model.ModulePiutang:
 		action := entry.CategoryID // PINJAM or BAYAR
-		detail = fmt.Sprintf("*Kebun:* %s\n*Pegawai:* %s\n*Aksi:* %s\n*Nominal:* Rp%s",
-			entry.SiteName, entry.CrewName, action, formatRupiah(entry.AmountRaw))
+		prevBalance := entry.AmountFinal - entry.AmountRaw
+		if action == "BAYAR" {
+			prevBalance = entry.AmountFinal + entry.AmountRaw
+		}
+		detail = fmt.Sprintf("*Kebun:* %s\n*Pegawai:* %s\n*Aksi:* %s\n*Nominal:* Rp%s\n*Perhitungan Saldo:*\n> Saldo Awal: Rp%s\n> %s: Rp%s\n*Saldo Akhir:* Rp%s",
+			entry.SiteName, entry.CrewName, action, formatRupiah(entry.AmountRaw),
+			formatRupiah(prevBalance), action, formatRupiah(entry.AmountRaw), formatRupiah(entry.AmountFinal))
+	case model.ModuleInvestasi:
+		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*Nominal:* Rp%s\n*Keterangan:* %s",
+			entry.SiteName, entry.CategoryName, formatRupiah(entry.AmountRaw), entry.Notes)
 	default:
 		detail = fmt.Sprintf("*Kebun:* %s\n*Nominal:* Rp%s", entry.SiteName, formatRupiah(entry.AmountRaw))
 	}
@@ -403,29 +463,63 @@ func (s *UIService) BuildReportModal(siteName string, report model.SiteReport) s
 		Blocks: slack.Blocks{
 			BlockSet: []slack.Block{
 				slack.NewHeaderBlock(txt(fmt.Sprintf("Kebun: %s", siteName))),
-				slack.NewSectionBlock(
-					md("Berikut adalah agregasi data dari seluruh transaksi di kebun ini."),
-					nil, nil,
-				),
+				slack.NewSectionBlock(md("_Agregasi seluruh transaksi yang tercatat di sistem._"), nil, nil),
 				slack.NewDividerBlock(),
-				slack.NewSectionBlock(
-					nil,
-					[]*slack.TextBlockObject{
-						md(fmt.Sprintf("*Total Produksi:*\n%d Kg", report.TotalWeight)),
-						md(fmt.Sprintf("*Operational Cost:*\nRp%s", formatRupiah(report.OperationalCost))),
-					},
-					nil,
-				),
-				slack.NewSectionBlock(
-					nil,
-					[]*slack.TextBlockObject{
-						md(fmt.Sprintf("*Net Profit:*\nRp%s", formatRupiah(report.NetProfit))),
-						md(fmt.Sprintf("*ROI Tracking:*\n%.2f%%", report.ROITracking)),
-					},
-					nil,
-				),
+
+				// Section 1: Panen
+				slack.NewSectionBlock(md("🌾 *PANEN TBS*"), nil, nil),
+				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
+					md(fmt.Sprintf("*Total Berat:*\n%d Kg", report.TotalWeight)),
+					md(fmt.Sprintf("*Gross Income:*\nRp%s", formatRupiah(report.GrossIncome))),
+					md(fmt.Sprintf("*Total Upah:*\nRp%s", formatRupiah(report.TotalUpah))),
+					md(fmt.Sprintf("*Total Transport:*\nRp%s", formatRupiah(report.TotalTransport))),
+				}, nil),
+				slack.NewDividerBlock(),
+
+				// Section 2: Operasional & Financials
+				slack.NewSectionBlock(md("💰 *INVESTASI & ROI*"), nil, nil),
+				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
+					md(fmt.Sprintf("*Investasi Awal:*\nRp%s", formatRupiah(report.TargetModal))),
+					md(fmt.Sprintf("*Profit Akumulasi:*\nRp%s", formatRupiah(report.NetProfit))),
+					md(fmt.Sprintf("*Sisa Modal:*\nRp%s", formatRupiah(report.RemainingCapital))),
+					md(fmt.Sprintf("*Titik Impas (BEP):*\n%s", report.BEPProjection)),
+				}, nil),
+				slack.NewDividerBlock(),
+
+				// Section 3: Piutang
+				slack.NewSectionBlock(md("📋 *PIUTANG PEGAWAI*"), nil, nil),
+				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
+					md(fmt.Sprintf("*Total Pinjam:*\nRp%s", formatRupiah(report.TotalPinjam))),
+					md(fmt.Sprintf("*Total Bayar:*\nRp%s", formatRupiah(report.TotalBayar))),
+					md(fmt.Sprintf("*Utang Beredar:*\nRp%s", formatRupiah(report.OutstandingDebt))),
+				}, nil),
+
 				slack.NewDividerBlock(),
 				slack.NewContextBlock("", md(fmt.Sprintf("_Target Balik Modal: Rp%s_", formatRupiah(report.TargetModal)))),
+			},
+		},
+	}
+}
+
+// BuildReportMessage builds a message-based report for site performance.
+func (s *UIService) BuildReportMessage(siteName string, report model.SiteReport) slack.Message {
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					slack.NewSectionBlock(md(fmt.Sprintf("📊 *REKAP PERFORMA: %s*", siteName)), nil, nil),
+					slack.NewDividerBlock(),
+					slack.NewSectionBlock(md(fmt.Sprintf(
+						"🌾 *Panen:*\n• Berat: %d Kg\n• Gross: Rp%s\n• Upah: Rp%s\n• Transport: Rp%s\n\n"+
+							"💰 *Financials:*\n• Investasi: Rp%s\n• Balik Modal: Rp%s\n• *Sisa Modal: Rp%s*\n• ROI: %.2f%%\n• *BEP: %s*\n\n"+
+							"📋 *Piutang:*\n• Total Pinjam: Rp%s\n• Total Bayar: Rp%s\n• Outst. Utang: Rp%s",
+						report.TotalWeight, formatRupiah(report.GrossIncome), formatRupiah(report.TotalUpah), formatRupiah(report.TotalTransport),
+						formatRupiah(report.TargetModal), formatRupiah(report.NetProfit), formatRupiah(report.RemainingCapital), report.ROITracking,
+						report.BEPProjection,
+						formatRupiah(report.TotalPinjam), formatRupiah(report.TotalBayar), formatRupiah(report.OutstandingDebt),
+					)), nil, nil),
+					slack.NewContextBlock("", md(fmt.Sprintf("_Target Balik Modal: Rp%s_", formatRupiah(report.TargetModal)))),
+				},
 			},
 		},
 	}

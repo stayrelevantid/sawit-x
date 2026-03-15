@@ -26,6 +26,14 @@ func (m *mockSheetsClient) AppendRow(sheetName string, row []interface{}) error 
 	return m.appendErr
 }
 
+func (m *mockSheetsClient) UpdateCell(cellRange string, value interface{}) error {
+	return nil
+}
+
+func (m *mockSheetsClient) UpdateRange(rangeName string, values [][]interface{}) error {
+	return nil
+}
+
 // ---- MasterDataService Tests ----
 
 func TestGetActiveSites_OnlyReturnsActive(t *testing.T) {

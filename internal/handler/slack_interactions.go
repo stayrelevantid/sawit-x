@@ -67,6 +67,8 @@ func (h *SlackInteractionsHandler) handleViewSubmission(w http.ResponseWriter, r
 		h.handlePiutangCrewSelect(w, r, payload)
 	case "piutang_action_modal":
 		h.handlePiutangAction(w, r, payload)
+	case "investasi_entry_modal":
+		h.handleInvestasiEntry(w, r, payload)
 	default:
 		log.Printf("[INTERACTION] Unknown callbackID: %s", payload.View.CallbackID)
 		w.WriteHeader(http.StatusOK)
@@ -126,6 +128,11 @@ func (h *SlackInteractionsHandler) handleModuleSelection(w http.ResponseWriter, 
 		modal := h.uiService.BuildPiutangCrewSelectModal(state, crew)
 		respondWithUpdateView(w, modal)
 
+	case model.ModuleInvestasi:
+		site, _ := h.masterDataService.GetSiteByID(ctx, state.SiteID)
+		modal := h.uiService.BuildInvestasiModal(state, site.TargetModal)
+		respondWithUpdateView(w, modal)
+
 	default:
 		log.Printf("[INTERACTION] Unknown module type: %s", moduleType)
 		w.WriteHeader(http.StatusOK)
@@ -174,10 +181,21 @@ func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.R
 
 	modal := h.uiService.BuildReportModal(state.SiteName, report)
 
+	// 1. Update the modal view
 	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
 	if err != nil {
 		log.Printf("[REPORT] Error updating view: %v", err)
 	}
+
+	// 2. Also send as a message to the user/channel
+	msg := h.uiService.BuildReportMessage(state.SiteName, report)
+	_, _, err = h.slackClient.PostMessage(payload.User.ID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[REPORT] Error posting message: %v", err)
+	}
+
+	// Sync to X_REKAP
+	go h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -251,6 +269,12 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 		log.Printf("[PANEN] Error writing log: %v", err)
 	}
 
+	// Sync to X_REKAP
+	go func() {
+		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
+		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+	}()
+
 	respondClear(w)
 	go h.sendSuccessDM(payload.User.ID, entry)
 }
@@ -303,6 +327,12 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 		log.Printf("[OPERASIONAL] Error writing log: %v", err)
 	}
 
+	// Sync to X_REKAP
+	go func() {
+		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
+		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+	}()
+
 	respondClear(w)
 	go h.sendSuccessDM(payload.User.ID, entry)
 }
@@ -354,6 +384,15 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 		return
 	}
 
+	// Calculate new balance
+	balance, _ := h.masterDataService.GetCrewBalance(ctx, state.CrewID)
+	newBalance := balance
+	if actionID == "PINJAM" {
+		newBalance += amount
+	} else if actionID == "BAYAR" {
+		newBalance -= amount
+	}
+
 	entry := model.LogEntry{
 		LogID:         uuid.New().String(),
 		Timestamp:     time.Now(),
@@ -366,7 +405,7 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 		CrewID:        state.CrewID,
 		CrewName:      state.CrewName,
 		AmountRaw:     amount,
-		AmountFinal:   amount,
+		AmountFinal:   newBalance, // Store the resulting balance
 		Notes:         notes,
 		SlackUserID:   payload.User.ID,
 		SlackUsername: payload.User.Name,
@@ -375,6 +414,12 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 	if err := h.logService.WriteLog(ctx, entry); err != nil {
 		log.Printf("[PIUTANG] Error writing log: %v", err)
 	}
+
+	// Sync to X_REKAP
+	go func() {
+		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
+		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+	}()
 
 	respondClear(w)
 	go h.sendSuccessDM(payload.User.ID, entry)
@@ -434,4 +479,76 @@ func (h *SlackInteractionsHandler) sendErrorMessage(w http.ResponseWriter, msg s
 // background handler for events (kept for context-awareness)
 func (h *SlackInteractionsHandler) runBackground(ctx context.Context, f func(context.Context)) {
 	go f(context.Background())
+}
+
+// --- Step 3d: Investasi Entry ---
+func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	values := payload.View.State.Values
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	eventDate := values["date_block"]["event_date"].SelectedDate
+	amountStr := values["amount_block"]["amount_raw"].Value
+	notes := values["notes_block"]["notes"].Value
+
+	amount, err := parseAmount(amountStr)
+	if err != nil || amount <= 0 {
+		respondWithErrors(w, "amount_block", "Nominal harus berupa angka positif (contoh: 200.000.000)")
+		return
+	}
+
+	// 1. Update direct site capital in MASTER sheet
+	if err := h.masterDataService.UpdateSiteTarget(ctx, state.SiteID, amount); err != nil {
+		log.Printf("[INVESTASI] Error updating site target: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// 2. Log the change to X_LOG for audit trail
+	entry := model.LogEntry{
+		LogID:         uuid.New().String(),
+		Timestamp:     time.Now(),
+		EventDate:     parseDate(eventDate),
+		ModuleType:    model.ModuleInvestasi,
+		SiteID:        state.SiteID,
+		SiteName:      state.SiteName,
+		CategoryID:    "UPDATE_CAPITAL",
+		CategoryName:  "Update Modal Lahan",
+		AmountRaw:     amount,
+		AmountFinal:   amount,
+		Notes:         notes,
+		SlackUserID:   payload.User.ID,
+		SlackUsername: payload.User.Name,
+	}
+
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[INVESTASI] Error writing audit log: %v", err)
+		// We don't return error here because master sheet was already updated
+	}
+
+	// Success Response
+	h.sendSuccessDM(payload.User.ID, entry)
+
+	// Sync to X_REKAP
+	go func() {
+		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
+		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+	}()
+
+	w.WriteHeader(http.StatusOK)
+	respondClear(w)
+}
+
+func (h *SlackInteractionsHandler) syncRekap(ctx context.Context, siteID string, siteName string, report model.SiteReport) {
+	if err := h.masterDataService.SyncSiteReportToSheet(ctx, siteID, siteName, report); err != nil {
+		log.Printf("[REKAP] Failed to sync to X_REKAP: %v", err)
+	}
+}
+
+func parseAmount(s string) (int64, error) {
+	s = strings.ReplaceAll(s, ".", "")
+	s = strings.ReplaceAll(s, ",", "")
+	return strconv.ParseInt(s, 10, 64)
 }

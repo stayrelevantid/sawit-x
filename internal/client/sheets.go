@@ -16,6 +16,8 @@ import (
 type SheetsReader interface {
 	ReadSpreadsheet(readRange string) ([][]interface{}, error)
 	AppendRow(sheetName string, row []interface{}) error
+	UpdateCell(cellRange string, value interface{}) error
+	UpdateRange(rangeName string, values [][]interface{}) error
 }
 
 // SheetsClient is the production implementation of SheetsReader using Google Sheets API v4.
@@ -81,6 +83,38 @@ func (c *SheetsClient) AppendRow(sheetName string, row []interface{}) error {
 		Do()
 	if err != nil {
 		return fmt.Errorf("unable to append row: %v", err)
+	}
+
+	return nil
+}
+
+// UpdateCell updates a single cell in the spreadsheet.
+func (c *SheetsClient) UpdateCell(cellRange string, value interface{}) error {
+	valueRange := &sheets.ValueRange{
+		Values: [][]interface{}{{value}},
+	}
+
+	_, err := c.Service.Spreadsheets.Values.Update(c.SpreadsheetID, cellRange, valueRange).
+		ValueInputOption("USER_ENTERED").
+		Do()
+	if err != nil {
+		return fmt.Errorf("unable to update cell: %v", err)
+	}
+
+	return nil
+}
+
+// UpdateRange updates a range of cells in the spreadsheet.
+func (c *SheetsClient) UpdateRange(rangeName string, values [][]interface{}) error {
+	valueRange := &sheets.ValueRange{
+		Values: values,
+	}
+
+	_, err := c.Service.Spreadsheets.Values.Update(c.SpreadsheetID, rangeName, valueRange).
+		ValueInputOption("USER_ENTERED").
+		Do()
+	if err != nil {
+		return fmt.Errorf("unable to update range: %v", err)
 	}
 
 	return nil
