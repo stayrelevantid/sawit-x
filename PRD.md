@@ -65,11 +65,13 @@ Antarmuka bertingkat yang sinkron real-time dengan database:
 ```
 /sawit-x
   → Modal 1: Pilih Kebun
-  → Modal 2: Pilih Modul (Panen / Operasional / Piutang)
-  → Modal 3a (Panen): Tanggal, Pemanen, Berat, Harga/Kg, Upah, Bensin
-  → Modal 3b (Operasional): Kategori, Penanggung Jawab, Nominal, Keterangan
-  → Modal 3c (Piutang): Pilih Pegawai → Tampilkan Saldo → Pinjam/Bayar + Nominal
-  → Aksi: Tulis ke X_LOG di Google Sheets
+  → Modal 2: Pilih Mode (Pencatatan / Rekap)
+  → Modal 3 (Pencatatan): Pilih Modul (Panen / Operasional / Piutang)
+    → Modal 4a (Panen): Tanggal, Pemanen, Berat, Harga/Kg, Upah, Bensin
+    → Modal 4b (Operasional): Kategori, Penanggung Jawab, Nominal, Keterangan
+    → Modal 4c (Piutang): Pilih Pegawai → Tampilkan Saldo → Pinjam/Bayar + Nominal
+  → Modal 3 (Rekap): Tampilkan Dashboard Performa
+  → Aksi: Tulis ke X_LOG (untuk Pencatatan)
   → Response: Pesan sukses di DM Slack
 ```
 

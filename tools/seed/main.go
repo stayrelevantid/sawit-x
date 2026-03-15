@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
@@ -13,24 +14,89 @@ const spreadsheetID = "1RBWoR_ZOfPZPKgL4RCnYcvI0xe2FFY8B_qPrxONTvVM"
 
 func main() {
 	ctx := context.Background()
-	srv, err := sheets.NewService(ctx,
-		option.WithCredentialsFile("/Users/muhammad.indragiri/Kerja/sawit-x/se.json"),
-		option.WithScopes(sheets.SpreadsheetsScope),
-	)
+	
+	// Try to use se.json if exists, else ADC
+	credFile := "/Users/muhammad.indragiri/Kerja/sawit-x/se.json"
+	var opts []option.ClientOption
+	if _, err := os.Stat(credFile); err == nil {
+		opts = append(opts, option.WithCredentialsFile(credFile))
+	}
+	opts = append(opts, option.WithScopes(sheets.SpreadsheetsScope))
+
+	srv, err := sheets.NewService(ctx, opts...)
 	if err != nil {
-		log.Fatalf("Failed: %v", err)
+		log.Fatalf("Failed to create Sheets service: %v", err)
 	}
 
-	// Tambah baris baru ke Categories (utang & pelunasan)
-	newRows := [][]interface{}{
-		{"cat_4", "Utang Panen", "UTANG", "FALSE", "ACTIVE"},
-		{"cat_5", "Pelunasan Utang", "PELUNASAN", "FALSE", "ACTIVE"},
+	// 1. Clean existing data (Clear ranges)
+	fmt.Println("🧹 Cleaning existing data...")
+	rangesToClear := []string{
+		"Sites!A1:Z100",
+		"Categories!A1:Z100",
+		"Crew!A1:Z100",
+		"X_LOG!A1:Z1000",
 	}
-	vr := &sheets.ValueRange{Values: newRows}
-	_, err = srv.Spreadsheets.Values.Append(spreadsheetID, "Categories!A:E", vr).
+	rbce := &sheets.BatchClearValuesRequest{Ranges: rangesToClear}
+	_, err = srv.Spreadsheets.Values.BatchClear(spreadsheetID, rbce).Do()
+	if err != nil {
+		log.Fatalf("Failed to clear sheets: %v", err)
+	}
+
+	// 2. Seed Sites
+	fmt.Println("🌱 Seeding Sites...")
+	sitesData := [][]interface{}{
+		{"id", "name", "location", "status", "target_modal", "created_at"},
+		{"SITE_001", "Kebun Induk", "Kalimantan Tengah", "ACTIVE", 50000000, "2026-01-01"},
+		{"SITE_002", "Kebun Plasma", "Kalimantan Tengah", "ACTIVE", 20000000, "2026-02-15"},
+		{"SITE_003", "Kebun Percobaan", "Bogor", "INACTIVE", 0, "2026-03-01"},
+	}
+	writeSheet(srv, "Sites!A1", sitesData)
+
+	// 3. Seed Categories
+	fmt.Println("🌱 Seeding Categories...")
+	categoriesData := [][]interface{}{
+		{"id", "name", "type", "multiplier_enabled", "status"},
+		{"CAT_PUPUK", "Pupuk NPK", "OPEX", "TRUE", "ACTIVE"},
+		{"CAT_BENSIN", "Bensin", "OPEX", "TRUE", "ACTIVE"},
+		{"CAT_PRUNING", "Pruning", "OPEX", "FALSE", "ACTIVE"},
+		{"CAT_SEMOROT", "Semprot Rumput", "OPEX", "FALSE", "ACTIVE"},
+		{"PANEN", "Panen TBS", "PANEN", "FALSE", "ACTIVE"},
+		{"PINJAM", "Pinjam", "PIUTANG", "FALSE", "ACTIVE"},
+		{"BAYAR", "Bayar / Potong", "PIUTANG", "FALSE", "ACTIVE"},
+	}
+	writeSheet(srv, "Categories!A1", categoriesData)
+
+	// 4. Seed Crew
+	fmt.Println("🌱 Seeding Crew...")
+	crewData := [][]interface{}{
+		{"id", "name", "role", "site_id", "status"},
+		{"CREW_001", "Jono", "Mandor", "SITE_001", "ACTIVE"},
+		{"CREW_002", "Slamet", "Pemanen", "SITE_001", "ACTIVE"},
+		{"CREW_003", "Adi", "Pemanen", "SITE_002", "ACTIVE"},
+		{"CREW_004", "Budi", "Buruh Harian", "SITE_001", "ACTIVE"},
+	}
+	writeSheet(srv, "Crew!A1", crewData)
+
+	// 5. Seed X_LOG Headers (20 Columns)
+	fmt.Println("🌱 Seeding X_LOG Headers...")
+	logHeaders := [][]interface{}{
+		{
+			"log_id", "timestamp", "event_date", "module_type", "site_id",
+			"site_name", "category_id", "category_name", "crew_id", "crew_name",
+			"amount_raw", "amount_final", "weight", "unit_price", "labor_cost",
+			"transport_cost", "notes", "slack_user_id", "slack_username", "channel_id",
+		},
+	}
+	writeSheet(srv, "X_LOG!A1", logHeaders)
+
+	fmt.Println("✅ Data reset and seeding completed successfully!")
+}
+
+func writeSheet(srv *sheets.Service, rangeName string, values [][]interface{}) {
+	vr := &sheets.ValueRange{Values: values}
+	_, err := srv.Spreadsheets.Values.Update(spreadsheetID, rangeName, vr).
 		ValueInputOption("USER_ENTERED").Do()
 	if err != nil {
-		log.Fatalf("Failed: %v", err)
+		log.Fatalf("Failed to update range %s: %v", rangeName, err)
 	}
-	fmt.Println("✅ Kategori Utang & Pelunasan berhasil ditambahkan!")
 }

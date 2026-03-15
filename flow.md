@@ -38,14 +38,25 @@
 **System Logic:**
 1. Ambil `site_id` dan `site_name` dari pilihan user.
 2. Simpan ke `PrivateMetadata` sebagai `TransactionState`.
-3. Respon: **Update view** → tampilkan **Modal 2**.
+3. Respon: **Update view** → tampilkan **Modal 2 (Mode Selection)**.
 
 ---
 
-### Step 3 — Modal 2: Pilih Modul (`module_selection_modal`)
+### Step 3 — Modal 2: Pilih Mode (`mode_selection_modal`)
 
 **UI Slack:**
 - Header: *"Kebun: [Nama Kebun]"*
+- Action Buttons:
+  - **[✍️ Pencatatan Baru]**: Masuk ke menu modul (Panen/Ops/Piutang).
+  - **[📊 Lihat Rekap]**: Masuk ke dashboard performa.
+
+---
+
+### Step 4 — Modal 3: Pilih Modul (`module_selection_modal`)
+
+*(Muncul jika user memilih "Pencatatan Baru" di Modal 2)*
+
+**UI Slack:**
 - Dropdown: Pilih jenis pencatatan
 
 | Value | Label | Deskripsi |
@@ -54,11 +65,11 @@
 | `OPERASIONAL` | 💰 Operasional | Catat pengeluaran kebun |
 | `PIUTANG` | 📋 Piutang | Kelola pinjaman pegawai |
 
-**System Logic:** Buka modal entry sesuai modul yang dipilih.
+**System Logic:** Buka modal form sesuai modul yang dipilih.
 
 ---
 
-### Step 4a — Modul Panen (`panen_entry_modal`)
+### Step 5a — Modul Panen (`panen_entry_modal`)
 
 **UI Slack (Modal Form):**
 
@@ -98,7 +109,7 @@ Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 
 ---
 
-### Step 4c — Modul Piutang (2 langkah)
+### Step 5c — Modul Piutang (2 langkah)
 
 #### Langkah 1: Pilih Pegawai (`piutang_crew_select_modal`)
 
@@ -124,7 +135,7 @@ Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 
 ---
 
-### Step 5 — Konfirmasi & DM
+### Step 6 — Konfirmasi & DM
 
 Setelah submit tiap modul:
 1. Respon Slack: **Clear modal** (modal tertutup otomatis).

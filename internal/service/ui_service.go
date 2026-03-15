@@ -37,11 +37,11 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site) slack.ModalViewR
 	}
 
 	return slack.ModalViewRequest{
-		Type:       slack.VTModal,
-		Title:      txt("🌴 SAWIT-X"),
-		Close:      txt("Batal"),
-		Submit:     txt("Lanjut"),
-		CallbackID: "site_selection_modal",
+		Type:            slack.VTModal,
+		Title:           txt("🌴 SAWIT-X"),
+		Close:           txt("Batal"),
+		Submit:          txt("Lanjut"),
+		CallbackID:      "site_selection_modal",
 		Blocks: slack.Blocks{
 			BlockSet: []slack.Block{
 				slack.NewHeaderBlock(txt("Pilih Lokasi Kebun")),
@@ -55,6 +55,30 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site) slack.ModalViewR
 						"site_id",
 						siteOptions...,
 					),
+				),
+			},
+		},
+	}
+}
+
+// BuildModeSelectionModal builds the choice between Recording and Reporting.
+func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.ModalViewRequest {
+	stateJSON, _ := json.Marshal(state)
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("🌴 Pilih Mode"),
+		Close:           txt("Batal"),
+		CallbackID:      "mode_selection_modal",
+		PrivateMetadata: string(stateJSON),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt(fmt.Sprintf("Kebun: %s", state.SiteName))),
+				slack.NewSectionBlock(md("Apa yang ingin Anda lakukan?"), nil, nil),
+				slack.NewActionBlock(
+					"mode_selection_block",
+					slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru")),
+					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap")),
 				),
 			},
 		},
@@ -341,9 +365,10 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 	var detail string
 	switch entry.ModuleType {
 	case model.ModulePanen:
-		detail = fmt.Sprintf("*Kebun:* %s\n*Pemanen:* %s\n*Berat:* %d Kg\n*Gross:* Rp%s\n*Net:* Rp%s",
-			entry.SiteName, entry.CrewName, entry.Weight,
-			formatRupiah(entry.AmountRaw), formatRupiah(entry.AmountFinal))
+		detail = fmt.Sprintf("*Kebun:* %s\n*Pemanen:* %s\n*Berat:* %d Kg\n*Harga:* Rp%s\n*Perhitungan:*\n> Gross: %d Kg x Rp%s = Rp%s\n> Biaya: Rp%s (Upah) + Rp%s (Bensin/Timbang)\n*Net Profit:* Rp%s",
+			entry.SiteName, entry.CrewName, entry.Weight, formatRupiah(entry.UnitPrice),
+			entry.Weight, formatRupiah(entry.UnitPrice), formatRupiah(entry.AmountRaw),
+			formatRupiah(entry.LaborCost), formatRupiah(entry.TransportCost), formatRupiah(entry.AmountFinal))
 	case model.ModuleOperasional:
 		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*PJ:* %s\n*Nominal:* Rp%s",
 			entry.SiteName, entry.CategoryName, entry.CrewName, formatRupiah(entry.AmountRaw))
@@ -364,6 +389,43 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 						nil, nil,
 					),
 				},
+			},
+		},
+	}
+}
+
+// BuildReportModal builds a dashboard-style modal for site performance.
+func (s *UIService) BuildReportModal(siteName string, report model.SiteReport) slack.ModalViewRequest {
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("📊 Rekap Performa"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt(fmt.Sprintf("Kebun: %s", siteName))),
+				slack.NewSectionBlock(
+					md("Berikut adalah agregasi data dari seluruh transaksi di kebun ini."),
+					nil, nil,
+				),
+				slack.NewDividerBlock(),
+				slack.NewSectionBlock(
+					nil,
+					[]*slack.TextBlockObject{
+						md(fmt.Sprintf("*Total Produksi:*\n%d Kg", report.TotalWeight)),
+						md(fmt.Sprintf("*Operational Cost:*\nRp%s", formatRupiah(report.OperationalCost))),
+					},
+					nil,
+				),
+				slack.NewSectionBlock(
+					nil,
+					[]*slack.TextBlockObject{
+						md(fmt.Sprintf("*Net Profit:*\nRp%s", formatRupiah(report.NetProfit))),
+						md(fmt.Sprintf("*ROI Tracking:*\n%.2f%%", report.ROITracking)),
+					},
+					nil,
+				),
+				slack.NewDividerBlock(),
+				slack.NewContextBlock("", md(fmt.Sprintf("_Target Balik Modal: Rp%s_", formatRupiah(report.TargetModal)))),
 			},
 		},
 	}

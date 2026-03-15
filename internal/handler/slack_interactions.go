@@ -46,7 +46,7 @@ func (h *SlackInteractionsHandler) HandleInteraction(w http.ResponseWriter, r *h
 	case slack.InteractionTypeViewSubmission:
 		h.handleViewSubmission(w, r, payload)
 	case slack.InteractionTypeBlockActions:
-		w.WriteHeader(http.StatusOK)
+		h.handleBlockActions(w, r, payload)
 	default:
 		w.WriteHeader(http.StatusOK)
 	}
@@ -94,7 +94,7 @@ func (h *SlackInteractionsHandler) handleSiteSelection(w http.ResponseWriter, r 
 		SiteName: siteName,
 	}
 
-	modal := h.uiService.BuildModuleSelectionModal(state)
+	modal := h.uiService.BuildModeSelectionModal(state)
 	respondWithUpdateView(w, modal)
 }
 
@@ -130,6 +130,56 @@ func (h *SlackInteractionsHandler) handleModuleSelection(w http.ResponseWriter, 
 		log.Printf("[INTERACTION] Unknown module type: %s", moduleType)
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	for _, action := range payload.ActionCallback.BlockActions {
+		switch action.ActionID {
+		case "view_report":
+			h.handleReport(w, r, payload)
+			return
+		case "mode_pencatatan":
+			h.handleModePencatatan(w, r, payload)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleModePencatatan(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	modal := h.uiService.BuildModuleSelectionModal(state)
+
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MODE] Error updating to module selection: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	report, err := h.masterDataService.GetSiteReport(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[REPORT] Error getting report for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildReportModal(state.SiteName, report)
+
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[REPORT] Error updating view: %v", err)
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // --- Step 3a: Panen Entry ---

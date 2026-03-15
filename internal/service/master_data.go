@@ -141,3 +141,61 @@ func (s *MasterDataService) GetCrewBalance(ctx context.Context, crewID string) (
 	}
 	return balance, nil
 }
+// GetSiteReport aggregates transaction data for a specific site from X_LOG.
+func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (model.SiteReport, error) {
+	// 1. Get Target Modal from Sites master
+	sites, _ := s.GetActiveSites(ctx)
+	var targetModal int64
+	for _, site := range sites {
+		if site.ID == siteID {
+			targetModal = site.TargetModal
+			break
+		}
+	}
+
+	// 2. Fetch all logs for this site
+	// Column order: [0]log_id, [1]timestamp, [2]event_date, [3]module_type, [4]site_id, [5]site_name,
+	// [10]amount_raw (Gross/Expense), [11]amount_final (Net), [12]weight, [13]unit_price, [14]labor_cost, [15]transport_cost
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:P")
+	if err != nil {
+		return model.SiteReport{}, err
+	}
+
+	var report model.SiteReport
+	report.TargetModal = targetModal
+
+	for _, row := range rows {
+		if len(row) < 12 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		if rowSiteID != siteID {
+			continue
+		}
+
+		moduleType := fmt.Sprintf("%v", row[3])
+		amountRaw, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		switch moduleType {
+		case "PANEN":
+			if len(row) >= 16 {
+				weight, _ := strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
+				labor, _ := strconv.ParseInt(fmt.Sprintf("%v", row[14]), 10, 64)
+				transport, _ := strconv.ParseInt(fmt.Sprintf("%v", row[15]), 10, 64)
+
+				report.TotalWeight += weight
+				report.GrossIncome += amountRaw
+				report.OperationalCost += (labor + transport)
+			}
+		case "OPERASIONAL":
+			report.OperationalCost += amountRaw
+		}
+	}
+
+	report.NetProfit = report.GrossIncome - report.OperationalCost
+	if targetModal > 0 {
+		report.ROITracking = (float64(report.NetProfit) / float64(targetModal)) * 100
+	}
+
+	return report, nil
+}
