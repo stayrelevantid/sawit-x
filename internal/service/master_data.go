@@ -50,6 +50,10 @@ func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, e
 }
 
 func (s *MasterDataService) GetActiveCategories(ctx context.Context) ([]model.Category, error) {
+	return s.GetCategoriesByType(ctx, "")
+}
+
+func (s *MasterDataService) GetCategoriesByType(ctx context.Context, catType string) ([]model.Category, error) {
 	// X_MASTER tab: Categories — columns: id, name, type, multiplier_enabled, status
 	rows, err := s.sheetsClient.ReadSpreadsheet("Categories!A2:E")
 	if err != nil {
@@ -66,12 +70,17 @@ func (s *MasterDataService) GetActiveCategories(ctx context.Context) ([]model.Ca
 			continue
 		}
 
+		rowType := fmt.Sprintf("%v", row[2])
+		if catType != "" && rowType != catType {
+			continue
+		}
+
 		multiplierEnabled := fmt.Sprintf("%v", row[3]) == "TRUE"
 
 		categories = append(categories, model.Category{
 			ID:                fmt.Sprintf("%v", row[0]),
 			Name:              fmt.Sprintf("%v", row[1]),
-			Type:              fmt.Sprintf("%v", row[2]),
+			Type:              rowType,
 			MultiplierEnabled: multiplierEnabled,
 			Status:            status,
 		})

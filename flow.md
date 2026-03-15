@@ -100,7 +100,7 @@ Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 | Field | Tipe Input | Keterangan |
 |---|---|---|
 | Tanggal | Date Picker | Default: hari ini |
-| Kategori Biaya | Dropdown dinamis | Dari `X_MASTER[Categories]` |
+| Kategori Biaya | Dropdown dinamis | Dari `X_MASTER[Categories]` (hanya tipe `OPEX`) |
 | Penanggung Jawab | Dropdown pegawai | Dari `X_MASTER[Crew]` |
 | Nominal | Number input | Nominal pengeluaran (Rupiah) |
 | Keterangan | Text input (opsional) | Misal: *"Beli NPK 12-12-17"* |

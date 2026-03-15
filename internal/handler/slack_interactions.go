@@ -116,7 +116,7 @@ func (h *SlackInteractionsHandler) handleModuleSelection(w http.ResponseWriter, 
 		respondWithUpdateView(w, modal)
 
 	case model.ModuleOperasional:
-		categories, _ := h.masterDataService.GetActiveCategories(ctx)
+		categories, _ := h.masterDataService.GetCategoriesByType(ctx, "OPEX")
 		crew, _ := h.masterDataService.GetActiveCrew(ctx)
 		modal := h.uiService.BuildOperasionalModal(state, categories, crew)
 		respondWithUpdateView(w, modal)
