@@ -1,104 +1,178 @@
-# SAWIT-X: The Ultimate System Flow
-
+# 🌴 SAWIT-X: System Flow
 > *"Scaling the plantation, automating the ledger, staying relevant."*
 
 ---
 
-## 1. Trigger & Discovery (The Startup)
+## 1. Arsitektur Endpoint
 
-Setiap interaksi dimulai dengan memastikan bot memiliki konteks data terbaru tanpa hard-coded di dalam aplikasi.
+| Endpoint | Method | Handler | Fungsi |
+|---|---|---|---|
+| `/health` | GET | `healthHandler` | Health check |
+| `/slack/events` | POST | `SlackEventsHandler.HandleCommand` | Menerima slash command `/sawit-x` |
+| `/slack/interactions` | POST | `SlackInteractionsHandler.HandleInteraction` | Menerima interaksi modal |
+
+---
+
+## 2. Flow Interaksi Lengkap
+
+### Step 1 — Trigger: `/sawit-x`
 
 **User Action:** Mengetik `/sawit-x` di Slack.
 
 **System Logic:**
-1. GCF melakukan `FetchMasterData` dari tab `X_MASTER`.
-2. Mengambil **List Dinamis**: Kebun, Kategori Biaya, dan Nama Pegawai.
-
-**UI Slack:** Menampilkan menu pilihan → *"Pilih Lokasi Kebun"*.
+1. Slack kirim `POST /slack/events`.
+2. `SlackVerifier` memverifikasi signature HMAC-SHA256 — request ditolak jika > 5 menit.
+3. Server langsung respon **200 OK** (menghindari timeout 3 detik Slack).
+4. Background goroutine: fetch daftar kebun aktif dari tab `Sites` di `X_MASTER`.
+5. Buka **Modal 1: Pilih Lokasi Kebun**.
 
 ---
 
-## 2. Modul Panen (Multi-Worker & Logistics)
+### Step 2 — Modal 1: Pilih Kebun (`site_selection_modal`)
 
-Digunakan untuk mencatat hasil produksi dengan detail biaya logistik yang transparan.
+**UI Slack:**
+- Header: *"Pilih Lokasi Kebun"*
+- Dropdown: Daftar kebun aktif dari `X_MASTER[Sites]` (hanya `Status == ACTIVE`)
+- Tombol: **[Lanjut]** | **[Batal]**
+
+**System Logic:**
+1. Ambil `site_id` dan `site_name` dari pilihan user.
+2. Simpan ke `PrivateMetadata` sebagai `TransactionState`.
+3. Respon: **Update view** → tampilkan **Modal 2**.
+
+---
+
+### Step 3 — Modal 2: Pilih Modul (`module_selection_modal`)
+
+**UI Slack:**
+- Header: *"Kebun: [Nama Kebun]"*
+- Dropdown: Pilih jenis pencatatan
+
+| Value | Label | Deskripsi |
+|---|---|---|
+| `PANEN` | 🌾 Panen | Catat hasil panen dan biaya logistik |
+| `OPERASIONAL` | 💰 Operasional | Catat pengeluaran kebun |
+| `PIUTANG` | 📋 Piutang | Kelola pinjaman pegawai |
+
+**System Logic:** Buka modal entry sesuai modul yang dipilih.
+
+---
+
+### Step 4a — Modul Panen (`panen_entry_modal`)
 
 **UI Slack (Modal Form):**
 
 | Field | Tipe Input | Keterangan |
-|-------|-----------|------------|
-| Tanggal | Date Picker | Default: Hari ini |
+|---|---|---|
+| Tanggal | Date Picker | Default: hari ini |
 | Pemanen | Multi-select dropdown | Pilih semua pegawai yang terlibat |
 | Berat (Kg) | Number input | Berat hasil panen |
 | Harga per Kg | Number input | Harga jual per kilogram |
-| Upah Panen | Number input | Biaya labor |
-| Bensin/Timbang | Number input | Biaya transport |
+| Upah Panen | Number input (opsional) | Biaya labor |
+| Bensin/Timbang | Number input (opsional) | Biaya transport |
+| Catatan | Text input (opsional) | Keterangan tambahan |
 
-**Backend Logic:**
-
+**Kalkulasi Backend:**
 ```
-Gross_Income = Berat × Harga
-Net_Income   = Gross_Income - (Upah + Bensin)
+Gross_Income = Berat × Harga_per_Kg
+Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 ```
 
-**Storage:** Menulis ke `X_LOG` → Mencatat total net dan rincian logistik.
+**Storage:** `X_LOG` — `module_type = PANEN`, `amount_raw = Gross_Income`, `amount_final = Net_Income`.
 
 ---
 
-## 3. Modul Operasional (Expense with Accountability)
-
-Digunakan untuk mencatat setiap pengeluaran kebun dengan penanggung jawab yang jelas.
+### Step 4b — Modul Operasional (`operasional_entry_modal`)
 
 **UI Slack (Modal Form):**
 
 | Field | Tipe Input | Keterangan |
-|-------|-----------|------------|
-| Kategori Biaya | Dropdown dinamis | Pupuk, Bensin, Pruning, dll |
-| Penanggung Jawab | Dropdown pegawai | Siapa yang belanja/pegang uang |
-| Nominal | Number input | Mendukung normalisasi ribuan |
-| Keterangan | Text input | Misal: "Beli NPK 12-12-17" |
+|---|---|---|
+| Tanggal | Date Picker | Default: hari ini |
+| Kategori Biaya | Dropdown dinamis | Dari `X_MASTER[Categories]` |
+| Penanggung Jawab | Dropdown pegawai | Dari `X_MASTER[Crew]` |
+| Nominal | Number input | Nominal pengeluaran (Rupiah) |
+| Keterangan | Text input (opsional) | Misal: *"Beli NPK 12-12-17"* |
 
-**Storage:** Menulis ke `X_LOG` → Kolom Kredit terisi, melacak pengeluaran per personil.
+**Storage:** `X_LOG` — `module_type = OPERASIONAL`, kolom kredit terisi.
 
 ---
 
-## 4. Modul Piutang (Employee Debt Management)
+### Step 4c — Modul Piutang (2 langkah)
 
-Digunakan untuk mengelola pinjaman atau pembayaran utang pegawai.
+#### Langkah 1: Pilih Pegawai (`piutang_crew_select_modal`)
+
+**UI Slack:**
+- Dropdown: Pilih nama pegawai dari `X_MASTER[Crew]`
+- Tombol: **[Cek Saldo]**
+
+**System Logic:** Fetch saldo berjalan pegawai dari `X_LOG` via `GetCrewBalance()`.
+
+#### Langkah 2: Aksi Piutang (`piutang_action_modal`)
 
 **UI Slack:**
 
 | Field | Tipe Input | Keterangan |
-|-------|-----------|------------|
-| Person | Dropdown pegawai | Pilih nama pegawai |
-| Action | Tombol | `[Pinjam]` atau `[Bayar/Potong]` |
+|---|---|---|
+| Info Saldo | Section (read-only) | Menampilkan saldo berjalan pegawai |
+| Tanggal | Date Picker | Default: hari ini |
+| Aksi | Dropdown | `[💸 Pinjam]` atau `[✅ Bayar / Potong]` |
+| Nominal | Number input | Jumlah pinjaman atau pembayaran |
+| Keterangan | Text input (opsional) | Catatan opsional |
 
-**System Logic:**
-- Bot mengambil **saldo berjalan** pegawai tersebut dari Sheets.
-- Menampilkan saldo sebagai info di Slack **sebelum** user menginput angka baru.
-
-**Storage:** Menulis ke `X_LOG` dengan kategori `"Utang"`.
-
----
-
-## 5. Reporting (Dashboard Visualization)
-
-**Action:** Klik tombol `[Lihat Rekap]`.
-
-**Output:** Bot melakukan agregasi data dan menampilkan ringkasan performa kebun:
-
-| Metrik | Deskripsi |
-|--------|-----------|
-| Total Produksi | Jumlah hasil panen (Kg) |
-| Operational Cost | Total biaya & upah |
-| Net Profit | Laba bersih |
-| ROI Tracking | Sisa target balik modal |
+**Storage:** `X_LOG` — `module_type = PIUTANG`, `category_id = PINJAM` atau `BAYAR`.
 
 ---
 
-## 6. Skema Database Final (Google Sheets)
+### Step 5 — Konfirmasi & DM
 
-| Tab | Fungsi |
-|-----|--------|
-| `X_MASTER` | Config — data kebun, kategori, crew |
-| `X_LOG` | Database utama — semua transaksi |
-| `X_REKAP` | Rekap otomatis — ringkasan performa |
+Setelah submit tiap modul:
+1. Respon Slack: **Clear modal** (modal tertutup otomatis).
+2. Background: Bot kirim **DM konfirmasi** ke user.
+
+**Contoh DM Panen:**
+```
+✅ Data Berhasil Dicatat!
+
+Kebun: Kebun Induk
+Pemanen: Jono, Slamet
+Berat: 1250 Kg
+Gross: Rp3.000.000
+Net:   Rp2.750.000
+```
+
+---
+
+## 3. Skema Callback Modal
+
+```
+/sawit-x
+    │
+    ▼
+site_selection_modal      ← Pilih Kebun
+    │
+    ▼
+module_selection_modal    ← Pilih Modul
+    │
+    ├── PANEN      ──▶ panen_entry_modal
+    │                        └── WriteLog (X_LOG)
+    │
+    ├── OPERASIONAL ──▶ operasional_entry_modal
+    │                        └── WriteLog (X_LOG)
+    │
+    └── PIUTANG    ──▶ piutang_crew_select_modal
+                             │  GetCrewBalance (X_LOG)
+                             ▼
+                        piutang_action_modal
+                             └── WriteLog (X_LOG)
+```
+
+---
+
+## 4. Keamanan
+
+| Mekanisme | Detail |
+|---|---|
+| **Slack HMAC Verification** | Setiap request diverifikasi via `X-Slack-Signature`. Request > 5 menit direject. |
+| **Environment Variables** | Credentials disimpan di environment variable Cloud Functions (tidak hardcoded). |
+| **Input Validation** | Nominal divalidasi tipe dan sign — input negatif atau non-integer ditolak inline. |
