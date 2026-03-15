@@ -6,12 +6,12 @@
 | Field | Value |
 |---|---|
 | **Code Name** | SAWIT-X |
-| **Status** | 🟡 In Development |
+| **Status** | 🟢 Live / Production |
 | **Maintainer** | - |
 | **Platform** | GCP Cloud Functions (Go 1.26) |
 | **Interface** | Slack Interactive App (Block Kit) |
 | **Database** | Google Sheets (Headless API) |
-| **Last Updated** | 2026-03-14 |
+| **Last Updated** | 2026-03-15 |
 
 ---
 

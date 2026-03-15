@@ -476,26 +476,50 @@ func (s *UIService) BuildReportModal(siteName string, report model.SiteReport) s
 				}, nil),
 				slack.NewDividerBlock(),
 
-				// Section 2: Operasional & Financials
-				slack.NewSectionBlock(md("💰 *INVESTASI & ROI*"), nil, nil),
+				// Section 2: Operasional
+				slack.NewSectionBlock(md("💰 *OPERASIONAL*"), nil, nil),
 				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
-					md(fmt.Sprintf("*Investasi Awal:*\nRp%s", formatRupiah(report.TargetModal))),
-					md(fmt.Sprintf("*Profit Akumulasi:*\nRp%s", formatRupiah(report.NetProfit))),
-					md(fmt.Sprintf("*Sisa Modal:*\nRp%s", formatRupiah(report.RemainingCapital))),
-					md(fmt.Sprintf("*Titik Impas (BEP):*\n%s", report.BEPProjection)),
+					md(fmt.Sprintf("*Biaya Ops Mandiri:*\nRp%s", formatRupiah(report.TotalOperasional))),
+					md(fmt.Sprintf("*Total Pengeluaran:*\nRp%s", formatRupiah(report.OperationalCost))),
 				}, nil),
 				slack.NewDividerBlock(),
 
-				// Section 3: Piutang
-				slack.NewSectionBlock(md("📋 *PIUTANG PEGAWAI*"), nil, nil),
+				// Section 3: Piutang (Utang)
+				slack.NewSectionBlock(md("📋 *UTANG / PIUTANG*"), nil, nil),
 				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
 					md(fmt.Sprintf("*Total Pinjam:*\nRp%s", formatRupiah(report.TotalPinjam))),
 					md(fmt.Sprintf("*Total Bayar:*\nRp%s", formatRupiah(report.TotalBayar))),
 					md(fmt.Sprintf("*Utang Beredar:*\nRp%s", formatRupiah(report.OutstandingDebt))),
 				}, nil),
+				slack.NewDividerBlock(),
+
+				// Section 4: Finansial & ROI
+				slack.NewSectionBlock(md("📈 *FINANSIAL & ROI*"), nil, nil),
+				slack.NewSectionBlock(nil, []*slack.TextBlockObject{
+					md(fmt.Sprintf("*Profit Akumulasi:*\nRp%s", formatRupiah(report.NetProfit))),
+					md(fmt.Sprintf("*Sisa Modal:*\nRp%s", formatRupiah(report.RemainingCapital))),
+					md(fmt.Sprintf("*ROI Tracking:*\n%.2f%%", report.ROITracking)),
+					md(fmt.Sprintf("*BEP Projection:*\n%s", report.BEPProjection)),
+				}, nil),
+				slack.NewDividerBlock(),
+
+				// Section: Detail Perhitungan
+				slack.NewSectionBlock(md("📝 *DETAIL HITUNG*"), nil, nil),
+				slack.NewSectionBlock(md(fmt.Sprintf(
+					"• *Gross*: Rp%s\n"+
+						"• *Biaya*: Rp%s (Panen + Ops)\n"+
+						"• *Net*: Rp%s - Rp%s = *Rp%s*\n"+
+						"• *ROI*: (Rp%s / Rp%s) × 100 = *%.2f%%*\n"+
+						"• *Sisa*: Rp%s - Rp%s = *Rp%s*",
+					formatRupiah(report.GrossIncome),
+					formatRupiah(report.OperationalCost),
+					formatRupiah(report.GrossIncome), formatRupiah(report.OperationalCost), formatRupiah(report.NetProfit),
+					formatRupiah(report.NetProfit), formatRupiah(report.TargetModal), report.ROITracking,
+					formatRupiah(report.TargetModal), formatRupiah(report.NetProfit), formatRupiah(report.RemainingCapital),
+				)), nil, nil),
 
 				slack.NewDividerBlock(),
-				slack.NewContextBlock("", md(fmt.Sprintf("_Target Balik Modal: Rp%s_", formatRupiah(report.TargetModal)))),
+				slack.NewContextBlock("", md(fmt.Sprintf("_Target Investasi: Rp%s_", formatRupiah(report.TargetModal)))),
 			},
 		},
 	}
@@ -510,15 +534,26 @@ func (s *UIService) BuildReportMessage(siteName string, report model.SiteReport)
 					slack.NewSectionBlock(md(fmt.Sprintf("📊 *REKAP PERFORMA: %s*", siteName)), nil, nil),
 					slack.NewDividerBlock(),
 					slack.NewSectionBlock(md(fmt.Sprintf(
-						"🌾 *Panen:*\n• Berat: %d Kg\n• Gross: Rp%s\n• Upah: Rp%s\n• Transport: Rp%s\n\n"+
-							"💰 *Financials:*\n• Investasi: Rp%s\n• Balik Modal: Rp%s\n• *Sisa Modal: Rp%s*\n• ROI: %.2f%%\n• *BEP: %s*\n\n"+
-							"📋 *Piutang:*\n• Total Pinjam: Rp%s\n• Total Bayar: Rp%s\n• Outst. Utang: Rp%s",
-						report.TotalWeight, formatRupiah(report.GrossIncome), formatRupiah(report.TotalUpah), formatRupiah(report.TotalTransport),
-						formatRupiah(report.TargetModal), formatRupiah(report.NetProfit), formatRupiah(report.RemainingCapital), report.ROITracking,
+						"🌾 *Panen:*\n• Berat: %d Kg\n• Gross: Rp%s\n• Upah+Trans: Rp%s\n\n"+
+							"💰 *Operasional:*\n• Biaya Ops: Rp%s\n• Total Biaya: Rp%s\n\n"+
+							"📋 *Piutang:*\n• Outst. Utang: Rp%s\n\n"+
+							"📈 *Finansial:*\n• Profit: Rp%s\n• Sisa Modal: Rp%s\n• ROI: %.2f%%\n• *BEP: %s*",
+						report.TotalWeight, formatRupiah(report.GrossIncome), formatRupiah(report.TotalUpah+report.TotalTransport),
+						formatRupiah(report.TotalOperasional), formatRupiah(report.OperationalCost),
+						formatRupiah(report.OutstandingDebt),
+						formatRupiah(report.NetProfit), formatRupiah(report.RemainingCapital), report.ROITracking,
 						report.BEPProjection,
-						formatRupiah(report.TotalPinjam), formatRupiah(report.TotalBayar), formatRupiah(report.OutstandingDebt),
 					)), nil, nil),
-					slack.NewContextBlock("", md(fmt.Sprintf("_Target Balik Modal: Rp%s_", formatRupiah(report.TargetModal)))),
+					slack.NewDividerBlock(),
+					slack.NewSectionBlock(md(fmt.Sprintf(
+						"📝 *Detail Hitung:*\n"+
+							"• Gross: Rp%s\n"+
+							"• Biaya: Rp%s\n"+
+							"• Net: Rp%s - Rp%s = *Rp%s*",
+						formatRupiah(report.GrossIncome), formatRupiah(report.OperationalCost),
+						formatRupiah(report.GrossIncome), formatRupiah(report.OperationalCost), formatRupiah(report.NetProfit),
+					)), nil, nil),
+					slack.NewContextBlock("", md(fmt.Sprintf("_Target Investasi: Rp%s_", formatRupiah(report.TargetModal)))),
 				},
 			},
 		},

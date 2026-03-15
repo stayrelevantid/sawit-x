@@ -45,7 +45,6 @@ func init() {
 func SawitX(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] Raw Request URL: %s", r.URL.String())
 	log.Printf("[DEBUG] Request Path: %s", r.URL.Path)
-	log.Printf("[DEBUG] Headers: %v", r.Header)
 
 	if sheetsClient == nil {
 		log.Printf("[CRITICAL] Sheets client is nil during request handling")
@@ -53,16 +52,30 @@ func SawitX(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mux := http.NewServeMux()
-
-	// Health check
-	mux.HandleFunc("GET /health", healthHandler)
-
-	// Slack entry points with HMAC verification
-	mux.HandleFunc("POST /slack/events", middleware.SlackVerifier(eventsHandler.HandleCommand))
-	mux.HandleFunc("POST /slack/interactions", middleware.SlackVerifier(interactionHandler.HandleInteraction))
-
-	mux.ServeHTTP(w, r)
+	// Route based on path
+	switch r.URL.Path {
+	case "/health":
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		healthHandler(w, r)
+	case "/slack/events":
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		middleware.SlackVerifier(eventsHandler.HandleCommand)(w, r)
+	case "/slack/interactions":
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		middleware.SlackVerifier(interactionHandler.HandleInteraction)(w, r)
+	default:
+		log.Printf("[DEBUG] Route not found: %s", r.URL.Path)
+		http.NotFound(w, r)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

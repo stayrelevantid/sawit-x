@@ -338,6 +338,16 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 func (s *MasterDataService) SyncSiteReportToSheet(ctx context.Context, siteID string, siteName string, report model.SiteReport) error {
 	log.Printf("[REKAP] Syncing report for site %s to X_REKAP", siteID)
 
+	// Ensure siteName is present
+	if siteName == "" {
+		site, err := s.GetSiteByID(ctx, siteID)
+		if err == nil {
+			siteName = site.Name
+		} else {
+			siteName = siteID // Fallback to ID if name not found
+		}
+	}
+
 	// Range: X_REKAP!A2:A -> site_id is in col A
 	rows, err := s.sheetsClient.ReadSpreadsheet("X_REKAP!A2:A")
 	if err != nil {

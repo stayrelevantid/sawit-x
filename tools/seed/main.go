@@ -29,12 +29,12 @@ func main() {
 	}
 
 	// 1. Clean existing data (Clear ranges)
-	fmt.Println("🧹 Cleaning existing data...")
+	fmt.Println("🧹 Cleaning existing data for PRODUCTION baseline...")
 	rangesToClear := []string{
 		"Sites!A1:Z100",
 		"Categories!A1:Z100",
 		"Crew!A1:Z100",
-		"X_LOG!A1:Z1000",
+		"X_LOG!A1:Z5000",
 		"X_REKAP!A1:Z100",
 	}
 	rbce := &sheets.BatchClearValuesRequest{Ranges: rangesToClear}
@@ -43,38 +43,35 @@ func main() {
 		log.Fatalf("Failed to clear sheets: %v", err)
 	}
 
-	// 2. Seed Sites
-	fmt.Println("🌱 Seeding Sites...")
+	// 2. Seed Production Baseline: Sites
+	fmt.Println("🌱 Seeding Production Sites...")
 	sitesData := [][]interface{}{
 		{"id", "name", "location", "status", "target_modal", "created_at"},
-		{"SITE_001", "Kebun Induk", "Kalimantan Tengah", "ACTIVE", 50000000, "2026-01-01"},
-		{"SITE_002", "Kebun Plasma", "Kalimantan Tengah", "ACTIVE", 20000000, "2026-02-15"},
-		{"SITE_003", "Kebun Percobaan", "Bogor", "INACTIVE", 0, "2026-03-01"},
+		{"SITE_001", "Kebun Utama", "Lokasi Utama", "ACTIVE", 0, "2026-03-15"},
 	}
 	writeSheet(srv, "Sites!A1", sitesData)
 
-	// 3. Seed Categories
-	fmt.Println("🌱 Seeding Categories...")
+	// 3. Seed Production Baseline: Categories
+	fmt.Println("🌱 Seeding Production Categories...")
 	categoriesData := [][]interface{}{
 		{"id", "name", "type", "multiplier_enabled", "status"},
-		{"CAT_PUPUK", "Pupuk NPK", "OPEX", "TRUE", "ACTIVE"},
+		{"CAT_PUPUK", "Pupuk", "OPEX", "TRUE", "ACTIVE"},
 		{"CAT_BENSIN", "Bensin", "OPEX", "TRUE", "ACTIVE"},
 		{"CAT_PRUNING", "Pruning", "OPEX", "FALSE", "ACTIVE"},
-		{"CAT_SEMOROT", "Semprot Rumput", "OPEX", "FALSE", "ACTIVE"},
+		{"CAT_SEMPROT", "Semprot", "OPEX", "FALSE", "ACTIVE"},
+		{"CAT_GAJI", "Gaji / Upah Bulanan", "OPEX", "TRUE", "ACTIVE"},
+		{"CAT_OPERASIONAL", "Biaya Ops Lainnya", "OPEX", "TRUE", "ACTIVE"},
 		{"PANEN", "Panen TBS", "PANEN", "FALSE", "ACTIVE"},
 		{"PINJAM", "Pinjam", "PIUTANG", "FALSE", "ACTIVE"},
 		{"BAYAR", "Bayar / Potong", "PIUTANG", "FALSE", "ACTIVE"},
 	}
 	writeSheet(srv, "Categories!A1", categoriesData)
 
-	// 4. Seed Crew
-	fmt.Println("🌱 Seeding Crew...")
+	// 4. Seed Production Baseline: Crew
+	fmt.Println("🌱 Seeding Production Crew...")
 	crewData := [][]interface{}{
 		{"id", "name", "role", "site_id", "status"},
-		{"CREW_001", "Jono", "Mandor", "SITE_001", "ACTIVE"},
-		{"CREW_002", "Slamet", "Pemanen", "SITE_001", "ACTIVE"},
-		{"CREW_003", "Adi", "Pemanen", "SITE_002", "ACTIVE"},
-		{"CREW_004", "Budi", "Buruh Harian", "SITE_001", "ACTIVE"},
+		{"CREW_001", "Mandor Utama", "Mandor", "SITE_001", "ACTIVE"},
 	}
 	writeSheet(srv, "Crew!A1", crewData)
 
@@ -90,7 +87,7 @@ func main() {
 	}
 	writeSheet(srv, "X_LOG!A1", logHeaders)
 
-	// 6. Seed X_REKAP Headers
+	// 6. Seed X_REKAP Headers (14 Columns)
 	fmt.Println("🌱 Seeding X_REKAP Headers...")
 	rekapHeaders := [][]interface{}{
 		{
@@ -101,7 +98,7 @@ func main() {
 	}
 	writeSheet(srv, "X_REKAP!A1", rekapHeaders)
 
-	fmt.Println("✅ Data reset and seeding completed successfully!")
+	fmt.Println("✅ PRODUCTION baseline reset and seeding completed successfully!")
 }
 
 func writeSheet(srv *sheets.Service, rangeName string, values [][]interface{}) {

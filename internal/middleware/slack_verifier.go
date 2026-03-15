@@ -20,6 +20,7 @@ func SlackVerifier(next http.HandlerFunc) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if signingSecret == "" {
+			log.Printf("[CRITICAL] SLACK_SIGNING_SECRET is not set in environment")
 			http.Error(w, "Slack signing secret not configured", http.StatusInternalServerError)
 			return
 		}

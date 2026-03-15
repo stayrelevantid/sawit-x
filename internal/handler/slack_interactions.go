@@ -528,16 +528,13 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 		// We don't return error here because master sheet was already updated
 	}
 
-	// Success Response
-	h.sendSuccessDM(payload.User.ID, entry)
-
-	// Sync to X_REKAP
+	// Success Response & Sync
 	go func() {
+		h.sendSuccessDM(payload.User.ID, entry)
 		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
 		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
 	}()
 
-	w.WriteHeader(http.StatusOK)
 	respondClear(w)
 }
 
