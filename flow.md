@@ -1,144 +1,104 @@
-# SAWIT-X: System Flow
-> Scaling the plantation, automating the ledger, staying relevant.
+# SAWIT-X: The Ultimate System Flow
 
-## Arsitektur
+> *"Scaling the plantation, automating the ledger, staying relevant."*
+
+---
+
+## 1. Trigger & Discovery (The Startup)
+
+Setiap interaksi dimulai dengan memastikan bot memiliki konteks data terbaru tanpa hard-coded di dalam aplikasi.
+
+**User Action:** Mengetik `/sawit-x` di Slack.
+
+**System Logic:**
+1. GCF melakukan `FetchMasterData` dari tab `X_MASTER`.
+2. Mengambil **List Dinamis**: Kebun, Kategori Biaya, dan Nama Pegawai.
+
+**UI Slack:** Menampilkan menu pilihan → *"Pilih Lokasi Kebun"*.
+
+---
+
+## 2. Modul Panen (Multi-Worker & Logistics)
+
+Digunakan untuk mencatat hasil produksi dengan detail biaya logistik yang transparan.
+
+**UI Slack (Modal Form):**
+
+| Field | Tipe Input | Keterangan |
+|-------|-----------|------------|
+| Tanggal | Date Picker | Default: Hari ini |
+| Pemanen | Multi-select dropdown | Pilih semua pegawai yang terlibat |
+| Berat (Kg) | Number input | Berat hasil panen |
+| Harga per Kg | Number input | Harga jual per kilogram |
+| Upah Panen | Number input | Biaya labor |
+| Bensin/Timbang | Number input | Biaya transport |
+
+**Backend Logic:**
 
 ```
-Slack → Cloud Functions Gen2 (Go) → Google Sheets API
-                ↓
-        SlackVerifier (HMAC-SHA256)
-                ↓
-        ┌───────────────┐
-        │  /slack/events │──→ HandleCommand (Slash Command)
-        │  /slack/inter  │──→ HandleInteraction (Modal Submit)
-        │  /health       │──→ Health Check
-        └───────────────┘
+Gross_Income = Berat × Harga
+Net_Income   = Gross_Income - (Upah + Bensin)
 ```
 
-## Endpoint
+**Storage:** Menulis ke `X_LOG` → Mencatat total net dan rincian logistik.
 
-| Endpoint | Method | Fungsi |
-|----------|--------|--------|
-| `/health` | GET | Health check (`{"status":"ok"}`) |
-| `/slack/events` | POST | Menerima slash command `/sawit-x` |
-| `/slack/interactions` | POST | Menerima interaksi modal (submit) |
+---
 
-## Flow Lengkap
+## 3. Modul Operasional (Expense with Accountability)
 
-### Step 1: Trigger — `/sawit-x`
+Digunakan untuk mencatat setiap pengeluaran kebun dengan penanggung jawab yang jelas.
 
-**User** mengetik `/sawit-x` di Slack.
+**UI Slack (Modal Form):**
 
-**System:**
-1. Slack kirim POST ke `/slack/events`
-2. `SlackVerifier` memverifikasi signature HMAC-SHA256
-3. Server langsung respon **200 OK** (agar tidak timeout 3 detik)
-4. Background goroutine:
-   - Fetch data kebun dari tab **`Sites`** di Google Sheets
-   - Filter hanya yang `Status == ACTIVE`
-   - Buka **Modal 1: Pilih Lokasi Kebun**
+| Field | Tipe Input | Keterangan |
+|-------|-----------|------------|
+| Kategori Biaya | Dropdown dinamis | Pupuk, Bensin, Pruning, dll |
+| Penanggung Jawab | Dropdown pegawai | Siapa yang belanja/pegang uang |
+| Nominal | Number input | Mendukung normalisasi ribuan |
+| Keterangan | Text input | Misal: "Beli NPK 12-12-17" |
 
-### Step 2: Modal 1 — Pilih Kebun
+**Storage:** Menulis ke `X_LOG` → Kolom Kredit terisi, melacak pengeluaran per personil.
 
-**UI:**
-- Header: "Pilih Lokasi Kebun"
-- Dropdown: Daftar kebun aktif (nama + lokasi)
-- Tombol: [Lanjut] [Batal]
+---
 
-**User** memilih kebun → klik [Lanjut]
+## 4. Modul Piutang (Employee Debt Management)
 
-**System:**
-1. Slack kirim POST ke `/slack/interactions` (callback: `site_selection_modal`)
-2. Handler ambil `site_id` yang dipilih
-3. Fetch **Categories** dan **Crew** dari Sheets
-4. Simpan `{site_id, site_name}` ke `PrivateMetadata`
-5. Respon: **Update view** → tampilkan **Modal 2**
+Digunakan untuk mengelola pinjaman atau pembayaran utang pegawai.
 
-### Step 3: Modal 2 — Detail Transaksi
+**UI Slack:**
 
-**UI:**
-| Field | Tipe | Keterangan |
-|-------|------|------------|
-| Kategori | Dropdown | Panen TBS, Pupuk, Herbisida, Utang, dll |
-| Personil | Dropdown | Daftar crew aktif (nama + role) |
-| Tanggal | Date Picker | Default: hari ini |
-| Nominal (Rupiah) | Text Input | Angka bulat positif |
-| Catatan | Text Input | Opsional |
+| Field | Tipe Input | Keterangan |
+|-------|-----------|------------|
+| Person | Dropdown pegawai | Pilih nama pegawai |
+| Action | Tombol | `[Pinjam]` atau `[Bayar/Potong]` |
 
-- Tombol: [Kirim] [Kembali]
+**System Logic:**
+- Bot mengambil **saldo berjalan** pegawai tersebut dari Sheets.
+- Menampilkan saldo sebagai info di Slack **sebelum** user menginput angka baru.
 
-**User** mengisi semua field → klik [Kirim]
+**Storage:** Menulis ke `X_LOG` dengan kategori `"Utang"`.
 
-### Step 4: Submit & Tulis ke Sheets
+---
 
-**System** (callback: `transaction_entry_modal`):
-1. Parse semua input dari modal
-2. Validasi: nominal harus angka positif (jika tidak → error inline di modal)
-3. Buat `LogEntry` dengan UUID unik
-4. **Tulis ke tab `X_LOG`** di Google Sheets (15 kolom)
-5. Respon: **Clear modal** (modal ditutup)
-6. Background: Kirim **DM konfirmasi** ke user
+## 5. Reporting (Dashboard Visualization)
 
-**DM Konfirmasi:**
-```
-✅ Data Berhasil Dicatat!
+**Action:** Klik tombol `[Lihat Rekap]`.
 
-Site: Kebun Alpha
-Kategori: Panen TBS
-Crew: Budi Santoso
-Nominal: Rp200000
-```
+**Output:** Bot melakukan agregasi data dan menampilkan ringkasan performa kebun:
 
-## Skema Google Sheets
+| Metrik | Deskripsi |
+|--------|-----------|
+| Total Produksi | Jumlah hasil panen (Kg) |
+| Operational Cost | Total biaya & upah |
+| Net Profit | Laba bersih |
+| ROI Tracking | Sisa target balik modal |
 
-### Tab `Sites`
-| A: ID | B: Name | C: Location | D: Status | E: Target_Modal |
-|-------|---------|-------------|-----------|-----------------|
-| site_1 | Kebun Alpha | Kalimantan Timur | ACTIVE | 1000 |
+---
 
-### Tab `Categories`
-| A: ID | B: Name | C: Type | D: MultiplierEnabled | E: Status |
-|-------|---------|---------|---------------------|-----------|
-| cat_1 | Panen TBS | PANEN | TRUE | ACTIVE |
-| cat_4 | Utang Panen | UTANG | FALSE | ACTIVE |
+## 6. Skema Database Final (Google Sheets)
 
-### Tab `Crew`
-| A: ID | B: Name | C: Role | D: SiteID | E: Status |
-|-------|---------|---------|-----------|-----------|
-| crew_1 | Budi Santoso | Pemanen | site_1 | ACTIVE |
-
-### Tab `X_LOG` (15 kolom)
-| Kolom | Field |
-|-------|-------|
-| A | LogID (UUID) |
-| B | Timestamp (RFC3339) |
-| C | EventDate (YYYY-MM-DD) |
-| D | SiteID |
-| E | SiteName |
-| F | CategoryID |
-| G | CategoryName |
-| H | CrewID |
-| I | CrewName |
-| J | AmountRaw |
-| K | AmountFinal |
-| L | Notes |
-| M | SlackUserID |
-| N | SlackUsername |
-| O | ChannelID |
-
-## Security
-
-- Semua request Slack diverifikasi via **HMAC-SHA256** (`X-Slack-Signature`)
-- Timestamp expire: 5 menit
-- Credentials Google Sheets via env var `GOOGLE_CREDENTIALS_JSON` (base64)
-- Environment variables via Cloud Functions config (bukan hardcoded)
-
-## Teknologi
-
-| Komponen | Stack |
-|----------|-------|
-| Runtime | Go 1.26 |
-| Hosting | GCP Cloud Functions Gen2 (asia-southeast2) |
-| Database | Google Sheets API v4 |
-| Bot Framework | slack-go/slack |
-| HTTP | Functions Framework Go |
+| Tab | Fungsi |
+|-----|--------|
+| `X_MASTER` | Config — data kebun, kategori, crew |
+| `X_LOG` | Database utama — semua transaksi |
+| `X_REKAP` | Rekap otomatis — ringkasan performa |
