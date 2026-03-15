@@ -1,0 +1,10 @@
+.git
+.gitignore
+.gcloudignore
+.env
+.env.*
+cmd/
+README.md
+PRD.md
+# Ensure se.json is NOT ignored (it is in .gitignore so gcloud might skip it)
+!se.json
