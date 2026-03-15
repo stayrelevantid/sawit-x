@@ -82,6 +82,8 @@ Antarmuka bertingkat yang sinkron real-time dengan database:
 | **Auto-Multiplier** | Mengonversi input cepat (misal: `200`) menjadi ribuan (`200.000`). Mode ini *opsional* dan dapat dinonaktifkan di `X_MASTER`. |
 | **Balance Tracking** | Memantau progres "Balik Modal" per lokasi kebun secara real-time dari tab `X_REKAP`. |
 | **Audit Trail** | Setiap entri mencatat `user_slack_id`, `timestamp`, dan `channel_id` secara otomatis. |
+| **ROI & BEP Engine** | Menghitung tingkat pengembalian investasi dan estimasi waktu balik modal berdasarkan profit rata-rata. |
+| **Auto-Sync REKAP** | Sinkronisasi otomatis data agregat dari `X_LOG` ke `X_REKAP` tanpa campur tangan manual. |
 
 ---
 
@@ -147,6 +149,8 @@ GCP Cloud Function (Go 1.26) ──── Slack HMAC Verification
 | `slack_username` | STRING | Username Slack |
 | `channel_id` | STRING | Channel tempat command dipanggil |
 
+> **Total: 20 Kolom.** Urutan sesuai dengan `X_LOG` v1.1.0.
+
 ### 4.2 Tab: `X_MASTER` — Konfigurasi & Master Data
 
 **Sheet: `Sites`**
@@ -182,16 +186,26 @@ GCP Cloud Function (Go 1.26) ──── Slack HMAC Verification
 
 ### 4.3 Tab: `X_REKAP` — Rekap & Dashboard
 
-> Tab ini diisi oleh formula Google Sheets (SUMIF, QUERY) yang membaca dari `X_LOG`. Tidak ada penulisan langsung dari kode ke tab ini.
+> Tab ini diisi secara otomatis oleh server (MasterDataService) setiap kali ada perubahan data atau request report.
 
-| Kolom | Formula Sumber | Keterangan |
+| Kolom | Tipe | Keterangan |
 |---|---|---|
-| `site_id` | Manual | Referensi ke `X_MASTER[Sites]` |
-| `total_opex` | `=SUMIF(...)` | Total pengeluaran operasional |
-| `total_capex` | `=SUMIF(...)` | Total investasi modal |
-| `total_pendapatan` | `=SUMIF(...)` | Total pemasukan |
-| `net_balance` | `=total_pendapatan - total_opex - total_capex` | Saldo bersih |
-| `progress_balik_modal` | `=net_balance / target_modal * 100` | Persentase (%) |
+| `site_id` | STRING | ID Kebun |
+| `site_name` | STRING | Nama Kebun |
+| `total_weight_kg` | INTEGER | Total Produksi |
+| `gross_income_rp` | INTEGER | Pendapatan Kotor |
+| `opex_rp` | INTEGER | Total Biaya Operasional |
+| `net_profit_rp` | INTEGER | Profit Bersih |
+| `investasi_total_rp` | INTEGER | Modal Awal |
+| `sisa_modal_rp` | INTEGER | Modal belum balik |
+| `roi_percent` | FLOAT | ROI (%) |
+| `bep_projection` | STRING | Estimasi BEP |
+| `total_pinjam` | INTEGER | Total Utang Pegawai |
+| `total_bayar` | INTEGER | Total Bayar Cicilan |
+| `outstanding_debt` | INTEGER | Sisa Utang Beredar |
+| `last_updated` | DATETIME | Timestamp Sinkronisasi |
+
+> **Total: 14 Kolom.** Dashboard utama owner di Spreadsheet.
 
 ---
 
@@ -276,10 +290,16 @@ Menangani semua interaction dari modal Slack:
 - [x] Setup Secret Manager untuk `SLACK_SIGNING_SECRET`.
 - [x] End-to-end testing dengan Slack workspace nyata.
 
-### Fase 5: Content & Dokumentasi ⬜
-- [ ] Penulisan artikel teknis seri SAWIT-X untuk `stayrelevant.id`.
-- [ ] Dokumentasi user guide (cara pakai untuk mandor/admin kebun).
-- [ ] README.md teknis untuk repository.
+### Fase 5: Content & Dokumentasi ✅
+- [x] README.md teknis untuk repository.
+- [x] flow.md untuk dokumentasi interaksi sistem.
+- [x] PRD.md update ke state terbaru.
+
+### Fase 6: Advance Analytics & Dashboard ✅
+- [x] Implementasi Phase 9: Investasi Awal & Proyeksi BEP.
+- [x] Implementasi Phase 10: X_REKAP Synchronization.
+- [x] Implementasi Phase 11: Detailed Financial Reports.
+- [x] Implementasi Phase 12: UI/UX & Data Integrity Polish.
 
 ---
 

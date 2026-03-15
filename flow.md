@@ -59,11 +59,8 @@
 **UI Slack:**
 - Dropdown: Pilih jenis pencatatan
 
-| Value | Label | Deskripsi |
-|---|---|---|
-| `PANEN` | 🌾 Panen | Catat hasil panen dan biaya logistik |
-| `OPERASIONAL` | 💰 Operasional | Catat pengeluaran kebun |
 | `PIUTANG` | 📋 Piutang | Kelola pinjaman pegawai |
+| `INVESTASI` | 🚀 Investasi | Catat modal balik / pembelian lahan |
 
 **System Logic:** Buka modal form sesuai modul yang dipilih.
 
@@ -135,6 +132,21 @@ Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 
 ---
 
+### Step 5d — Modul Investasi (`investasi_entry_modal`)
+
+**UI Slack (Modal Form):**
+
+| Field | Tipe Input | Keterangan |
+|---|---|---|
+| Judul | Read-only | *"Set Modal Awal"* (jika 0) atau *"Update Investasi"* |
+| Nominal Modal | Number input | Disarankan nominal total investasi lahan/aset |
+
+**System Logic:** 
+1. Update kolom `target_modal` di sheet `Sites`.
+2. Catat audit log di `X_LOG` dengan `module_type = INVESTASI`.
+
+---
+
 ### Step 6 — Konfirmasi & DM
 
 Setelah submit tiap modul:
@@ -164,11 +176,13 @@ Net:   Rp2.750.000
 **Output 1: Modal Dashboard**
 - Header: *"Kebun: [Nama Kebun]"*
 - **Seksi Panen**: Total Berat (Kg), Gross Income, Total Upah, Total Transport.
-- **Seksi Operasional**: Biaya Ops (dari modul Operasional).
-- **Seksi Financials**: Net Profit, ROI Tracking.
-- **Seksi Piutang**: Total Pinjam, Total Bayar, Utang Beredar.
+- **Seksi Operasional**: Biaya Ops Mandiri, Total Pengeluaran.
+- **Seksi Utang**: Total Pinjam, Total Bayar, Utang Beredar.
+- **Seksi Finansial**: Profit Akumulasi, Sisa Modal, ROI %, Proyeksi BEP.
+- **Detail Perhitungan**: Breakdown rumus matematika (Gross - Biaya = Net).
 
-**Output 2: Slack Message**
+**Output 2: X_REKAP Sync**
+Sesuai request user, setiap kali report dibuka atau transaksi dicatat, bot melakukan sinkronisasi otomatis ke tab `X_REKAP` di Spreadsheet untuk dashboard permanen.
 Bot mengirimkan pesan (DM) ke user dengan ringkasan yang sama sebagai arsip/history di chat.
 
 ---
