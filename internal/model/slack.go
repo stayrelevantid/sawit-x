@@ -32,6 +32,7 @@ type TransactionState struct {
 	EventDate    string `json:"event_date"`
 	AmountRaw    string `json:"amount_raw"`
 	Notes        string `json:"notes"`
+	ChannelID    string `json:"channel_id"`
 }
 
 // InteractionPayload is a wrapper for Slack's interaction JSON.

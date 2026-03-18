@@ -91,9 +91,13 @@ func (h *SlackInteractionsHandler) handleSiteSelection(w http.ResponseWriter, r 
 		}
 	}
 
+	var prevState model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &prevState)
+
 	state := model.TransactionState{
-		SiteID:   siteID,
-		SiteName: siteName,
+		SiteID:    siteID,
+		SiteName:  siteName,
+		ChannelID: prevState.ChannelID,
 	}
 
 	modal := h.uiService.BuildModeSelectionModal(state)
@@ -263,6 +267,7 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 		Notes:         notes,
 		SlackUserID:   payload.User.ID,
 		SlackUsername: payload.User.Name,
+		ChannelID:     state.ChannelID,
 	}
 
 	if err := h.logService.WriteLog(ctx, entry); err != nil {
@@ -276,7 +281,7 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 	}()
 
 	respondClear(w)
-	go h.sendSuccessDM(payload.User.ID, entry)
+	go h.sendSuccessNotification(payload.User.ID, entry)
 }
 
 // --- Step 3b: Operasional Entry ---
@@ -321,6 +326,7 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 		Notes:         notes,
 		SlackUserID:   payload.User.ID,
 		SlackUsername: payload.User.Name,
+		ChannelID:     state.ChannelID,
 	}
 
 	if err := h.logService.WriteLog(ctx, entry); err != nil {
@@ -334,7 +340,7 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 	}()
 
 	respondClear(w)
-	go h.sendSuccessDM(payload.User.ID, entry)
+	go h.sendSuccessNotification(payload.User.ID, entry)
 }
 
 // --- Step 3c-1: Piutang — Crew Selection ---
@@ -409,6 +415,7 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 		Notes:         notes,
 		SlackUserID:   payload.User.ID,
 		SlackUsername: payload.User.Name,
+		ChannelID:     state.ChannelID,
 	}
 
 	if err := h.logService.WriteLog(ctx, entry); err != nil {
@@ -422,16 +429,26 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 	}()
 
 	respondClear(w)
-	go h.sendSuccessDM(payload.User.ID, entry)
+	go h.sendSuccessNotification(payload.User.ID, entry)
 }
 
 // --- Helpers ---
 
-func (h *SlackInteractionsHandler) sendSuccessDM(userID string, entry model.LogEntry) {
+func (h *SlackInteractionsHandler) sendSuccessNotification(userID string, entry model.LogEntry) {
 	msg := h.uiService.BuildSuccessResponse(entry)
+	
+	// 1. Send to User DM
 	_, _, err := h.slackClient.PostMessage(userID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
-		log.Printf("[INTERACTION] Error sending success DM: %v", err)
+		log.Printf("[INTERACTION] Error sending success DM to %s: %v", userID, err)
+	}
+
+	// 2. Send to Channel if it's not a DM channel
+	if entry.ChannelID != "" && !strings.HasPrefix(entry.ChannelID, "D") {
+		_, _, err := h.slackClient.PostMessage(entry.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		if err != nil {
+			log.Printf("[INTERACTION] Error sending success to channel %s: %v", entry.ChannelID, err)
+		}
 	}
 }
 
@@ -521,6 +538,7 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 		Notes:         notes,
 		SlackUserID:   payload.User.ID,
 		SlackUsername: payload.User.Name,
+		ChannelID:     state.ChannelID,
 	}
 
 	if err := h.logService.WriteLog(ctx, entry); err != nil {
@@ -530,7 +548,7 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 
 	// Success Response & Sync
 	go func() {
-		h.sendSuccessDM(payload.User.ID, entry)
+		h.sendSuccessNotification(payload.User.ID, entry)
 		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
 		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
 	}()

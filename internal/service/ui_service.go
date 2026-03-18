@@ -27,7 +27,7 @@ func md(text string) *slack.TextBlockObject {
 }
 
 // BuildSiteSelectionModal builds the first modal to select a plantation site.
-func (s *UIService) BuildSiteSelectionModal(sites []model.Site) slack.ModalViewRequest {
+func (s *UIService) BuildSiteSelectionModal(sites []model.Site, channelID string) slack.ModalViewRequest {
 	var siteOptions []*slack.OptionBlockObject
 	for _, site := range sites {
 		siteOptions = append(siteOptions, slack.NewOptionBlockObject(
@@ -43,6 +43,7 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site) slack.ModalViewR
 		Close:           txt("Batal"),
 		Submit:          txt("Lanjut"),
 		CallbackID:      "site_selection_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
 		Blocks: slack.Blocks{
 			BlockSet: []slack.Block{
 				slack.NewHeaderBlock(txt("Pilih Lokasi Kebun")),

@@ -69,7 +69,7 @@ func (h *SlackEventsHandler) HandleCommand(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Build the site selection modal
-		modal := h.uiService.BuildSiteSelectionModal(sites)
+		modal := h.uiService.BuildSiteSelectionModal(sites, cmd.ChannelID)
 
 		_, err = h.slackClient.OpenView(triggerID, modal)
 		if err != nil {
