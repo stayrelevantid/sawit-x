@@ -418,10 +418,10 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 	var detail string
 	switch entry.ModuleType {
 	case model.ModulePanen:
-		detail = fmt.Sprintf("*Kebun:* %s\n*Pemanen:* %s\n*Berat:* %d Kg\n*Harga:* Rp%s\n*Perhitungan:*\n> Gross: %d Kg x Rp%s = Rp%s\n> Biaya: Rp%s (Upah) + Rp%s (Bensin/Timbang)\n*Net Profit:* Rp%s",
+		detail = fmt.Sprintf("*Kebun:* %s\n*Pemanen:* %s\n*Berat:* %d Kg\n*Harga:* Rp%s\n*Perhitungan:*\n> Gross: %d Kg x Rp%s = Rp%s\n> Biaya: Rp%s (Upah) + Rp%s (Bensin/Timbang)\n*Net Profit:* Rp%s\n*Catatan:* %s",
 			entry.SiteName, entry.CrewName, entry.Weight, formatRupiah(entry.UnitPrice),
 			entry.Weight, formatRupiah(entry.UnitPrice), formatRupiah(entry.AmountRaw),
-			formatRupiah(entry.LaborCost), formatRupiah(entry.TransportCost), formatRupiah(entry.AmountFinal))
+			formatRupiah(entry.LaborCost), formatRupiah(entry.TransportCost), formatRupiah(entry.AmountFinal), entry.Notes)
 	case model.ModuleOperasional:
 		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*PJ:* %s\n*Nominal:* Rp%s\n*Keterangan:* %s",
 			entry.SiteName, entry.CategoryName, entry.CrewName, formatRupiah(entry.AmountRaw), entry.Notes)
@@ -431,9 +431,9 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 		if action == "BAYAR" {
 			prevBalance = entry.AmountFinal + entry.AmountRaw
 		}
-		detail = fmt.Sprintf("*Kebun:* %s\n*Pegawai:* %s\n*Aksi:* %s\n*Nominal:* Rp%s\n*Perhitungan Saldo:*\n> Saldo Awal: Rp%s\n> %s: Rp%s\n*Saldo Akhir:* Rp%s",
+		detail = fmt.Sprintf("*Kebun:* %s\n*Pegawai:* %s\n*Aksi:* %s\n*Nominal:* Rp%s\n*Perhitungan Saldo:*\n> Saldo Awal: Rp%s\n> %s: Rp%s\n*Saldo Akhir:* Rp%s\n*Catatan:* %s",
 			entry.SiteName, entry.CrewName, action, formatRupiah(entry.AmountRaw),
-			formatRupiah(prevBalance), action, formatRupiah(entry.AmountRaw), formatRupiah(entry.AmountFinal))
+			formatRupiah(prevBalance), action, formatRupiah(entry.AmountRaw), formatRupiah(entry.AmountFinal), entry.Notes)
 	case model.ModuleInvestasi:
 		detail = fmt.Sprintf("*Kebun:* %s\n*Kategori:* %s\n*Nominal:* Rp%s\n*Keterangan:* %s",
 			entry.SiteName, entry.CategoryName, formatRupiah(entry.AmountRaw), entry.Notes)
