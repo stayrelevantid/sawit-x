@@ -440,6 +440,9 @@ func (s *UIService) BuildSuccessResponse(entry model.LogEntry) slack.Message {
 		detail = fmt.Sprintf("*Kebun:* %s\n*Nominal:* Rp%s", entry.SiteName, formatRupiah(entry.AmountRaw))
 	}
 
+	// Add event date to the detail
+	detail = fmt.Sprintf("*Tanggal:* %s\n%s", entry.EventDate.Format("02 Jan 2006"), detail)
+
 	return slack.Message{
 		Msg: slack.Msg{
 			Blocks: slack.Blocks{
@@ -462,8 +465,8 @@ func (s *UIService) BuildReportModal(siteName string, report model.SiteReport) s
 		Close: txt("Tutup"),
 		Blocks: slack.Blocks{
 			BlockSet: []slack.Block{
-				slack.NewHeaderBlock(txt(fmt.Sprintf("Kebun: %s", siteName))),
-				slack.NewSectionBlock(md("_Agregasi seluruh transaksi yang tercatat di sistem._"), nil, nil),
+				slack.NewHeaderBlock(txt(fmt.Sprintf("📊 Rekap: %s", siteName))),
+				slack.NewContextBlock("", md(fmt.Sprintf("_Data per tanggal: %s_", time.Now().Format("02 Jan 2006, 15:04")))),
 				slack.NewDividerBlock(),
 
 				// Section 1: Panen
@@ -532,6 +535,7 @@ func (s *UIService) BuildReportMessage(siteName string, report model.SiteReport)
 			Blocks: slack.Blocks{
 				BlockSet: []slack.Block{
 					slack.NewSectionBlock(md(fmt.Sprintf("📊 *REKAP PERFORMA: %s*", siteName)), nil, nil),
+					slack.NewContextBlock("", md(fmt.Sprintf("_Data per tanggal: %s_", time.Now().Format("02 Jan 2006, 15:04")))),
 					slack.NewDividerBlock(),
 					slack.NewSectionBlock(md(fmt.Sprintf(
 						"🌾 *Panen:*\n• Berat: %d Kg\n• Gross: Rp%s\n• Upah+Trans: Rp%s\n\n"+

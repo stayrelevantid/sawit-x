@@ -11,7 +11,7 @@
 | **Platform** | GCP Cloud Functions (Go 1.26) |
 | **Interface** | Slack Interactive App (Block Kit) |
 | **Database** | Google Sheets (Headless API) |
-| **Last Updated** | 2026-03-15 |
+| **Last Updated** | 2026-03-18 |
 
 ---
 
@@ -72,7 +72,7 @@ Antarmuka bertingkat yang sinkron real-time dengan database:
     → Modal 4c (Piutang): Pilih Pegawai → Tampilkan Saldo → Pinjam/Bayar + Nominal
   → Modal 3 (Rekap): Tampilkan Dashboard Performa
   → Aksi: Tulis ke X_LOG (untuk Pencatatan)
-  → Response: Pesan sukses di DM Slack
+  → Response: Pesan sukses di DM Slack (termasuk Tanggal Transaksi)
 ```
 
 ### 2.3 🧮 Finance Intelligence

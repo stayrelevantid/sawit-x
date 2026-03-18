@@ -157,6 +157,7 @@ Setelah submit tiap modul:
 ```
 ✅ Data Berhasil Dicatat!
 
+Tanggal: 18 Mar 2026
 Kebun: Kebun Induk
 Pemanen: Jono, Slamet
 Berat: 1250 Kg
