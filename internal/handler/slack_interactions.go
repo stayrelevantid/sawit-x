@@ -195,7 +195,15 @@ func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.R
 	msg := h.uiService.BuildReportMessage(state.SiteName, report)
 	_, _, err = h.slackClient.PostMessage(payload.User.ID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
-		log.Printf("[REPORT] Error posting message: %v", err)
+		log.Printf("[REPORT] Error posting message to user %s: %v", payload.User.ID, err)
+	}
+
+	// 3. Also send to Channel if it's not a DM channel
+	if state.ChannelID != "" && !strings.HasPrefix(state.ChannelID, "D") {
+		_, _, err = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		if err != nil {
+			log.Printf("[REPORT] Error posting message to channel %s: %v", state.ChannelID, err)
+		}
 	}
 
 	// Sync to X_REKAP
