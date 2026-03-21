@@ -389,3 +389,49 @@ func (s *MasterDataService) SyncSiteReportToSheet(ctx context.Context, siteID st
 	// Append new row if not found
 	return s.sheetsClient.AppendRow("X_REKAP", values)
 }
+
+// GetListPanen fetches all Panen logs for a site for a given year offset (0 = this year, -1 = last year).
+func (s *MasterDataService) GetListPanen(ctx context.Context, siteID string, yearOffset int) ([]model.LogEntry, error) {
+	// Need to read up to Col Q (17 cols) to get notes
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return nil, err
+	}
+
+	targetYear := time.Now().Year() + yearOffset
+	var results []model.LogEntry
+
+	for _, row := range rows {
+		if len(row) < 16 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		moduleType := fmt.Sprintf("%v", row[3])
+		if rowSiteID != siteID || moduleType != "PANEN" {
+			continue
+		}
+
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, err := time.Parse("2006-01-02", eventDateRaw)
+		if err != nil || eventDate.Year() != targetYear {
+			continue
+		}
+
+		weight, _ := strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
+		amountFinal, _ := strconv.ParseInt(fmt.Sprintf("%v", row[11]), 10, 64)
+
+		notes := ""
+		if len(row) > 16 {
+			notes = fmt.Sprintf("%v", row[16])
+		}
+
+		results = append(results, model.LogEntry{
+			EventDate:   eventDate,
+			CrewName:    fmt.Sprintf("%v", row[9]),
+			Weight:      weight,
+			AmountFinal: amountFinal,
+			Notes:       notes,
+		})
+	}
+	return results, nil
+}

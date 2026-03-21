@@ -81,6 +81,8 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					"mode_selection_block",
 					slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru")),
 					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap")),
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_ini", "PANEN_YEAR_THIS", txt("📅 List Panen 1 Tahun Ini")),
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_lalu", "PANEN_YEAR_LAST", txt("📅 List Panen 1 Tahun Lalu")),
 				),
 			},
 		},
@@ -577,4 +579,43 @@ func formatRupiah(amount int64) string {
 		result += string(c)
 	}
 	return result
+}
+
+// BuildListPanenModal builds a modal to show harvest data for a specific year.
+func (s *UIService) BuildListPanenModal(siteName string, targetYear int, panenList []model.LogEntry) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt(fmt.Sprintf("📅 List Panen %d", targetYear))),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(panenList)))),
+		slack.NewDividerBlock(),
+	}
+
+	limit := 30
+	if len(panenList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Tidak ada data panen di tahun ini."), nil, nil))
+	} else {
+		count := 0
+		for i := len(panenList) - 1; i >= 0; i-- {
+			if count >= limit {
+				blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+				break
+			}
+			p := panenList[i]
+			detail := fmt.Sprintf("🌾 *%s* | _%s_\n*Berat:* %d Kg | *Net:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, p.Weight, formatRupiah(p.AmountFinal))
+			if p.Notes != "" {
+				detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+			}
+			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+			blocks = append(blocks, slack.NewDividerBlock())
+			count++
+		}
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("🌾 Riwayat Panen"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
 }

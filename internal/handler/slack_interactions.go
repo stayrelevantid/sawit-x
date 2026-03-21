@@ -152,6 +152,12 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 		case "mode_pencatatan":
 			h.handleModePencatatan(w, r, payload)
 			return
+		case "view_list_panen_1_tahun_ini":
+			h.handleListPanen(w, r, payload, 0)
+			return
+		case "view_list_panen_1_tahun_lalu":
+			h.handleListPanen(w, r, payload, -1)
+			return
 		}
 	}
 	w.WriteHeader(http.StatusOK)
@@ -208,6 +214,30 @@ func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.R
 
 	// Sync to X_REKAP
 	go h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleListPanen(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback, yearOffset int) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	panenList, err := h.masterDataService.GetListPanen(ctx, state.SiteID, yearOffset)
+	if err != nil {
+		log.Printf("[LIST_PANEN] Error getting panen list for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	targetYear := time.Now().Year() + yearOffset
+	modal := h.uiService.BuildListPanenModal(state.SiteName, targetYear, panenList)
+
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[LIST_PANEN] Error updating view: %v", err)
+	}
 
 	w.WriteHeader(http.StatusOK)
 }

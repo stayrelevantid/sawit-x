@@ -49,6 +49,8 @@
 - Action Buttons:
   - **[✍️ Pencatatan Baru]**: Masuk ke menu modul (Panen/Ops/Piutang).
   - **[📊 Lihat Rekap]**: Masuk ke dashboard performa.
+  - **[📅 List Panen 1 Tahun Ini]**: Melihat daftar riwayat panen selama satu tahun berjalan.
+  - **[📅 List Panen 1 Tahun Lalu]**: Melihat daftar riwayat panen untuk satu tahun sebelumnya.
 
 ---
 
