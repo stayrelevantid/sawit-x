@@ -152,11 +152,20 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 		case "mode_pencatatan":
 			h.handleModePencatatan(w, r, payload)
 			return
+		case "view_list_pupuk":
+			h.handleListPupuk(w, r, payload)
+			return
+		case "view_rekap_hutang_pegawai":
+			h.handleRekapHutangPegawai(w, r, payload)
+			return
 		case "view_list_panen_1_tahun_ini":
 			h.handleListPanen(w, r, payload, 0)
 			return
 		case "view_list_panen_1_tahun_lalu":
 			h.handleListPanen(w, r, payload, -1)
+			return
+		case "view_list_semprot":
+			h.handleListSemprot(w, r, payload)
 			return
 		}
 	}
@@ -237,6 +246,122 @@ func (h *SlackInteractionsHandler) handleListPanen(w http.ResponseWriter, r *htt
 	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
 	if err != nil {
 		log.Printf("[LIST_PANEN] Error updating view: %v", err)
+	}
+
+	// Also send as a message to the sawit-x-apps channel (or to the contextual channel)
+	channelToSend := "#sawit-x-apps"
+	if state.ChannelID != "" && !strings.HasPrefix(state.ChannelID, "D") {
+		// If invoked from a specific public/private channel, reply there, but explicitly fallback/override as requested.
+		// Since user explicitly asked for "channel sawit-x-apps", we'll broadcast it there to be safe.
+		// We can also post to state.ChannelID if they differ. To be simple, we'll force "#sawit-x-apps".
+		channelToSend = "#sawit-x-apps" 
+	}
+	
+	msg := h.uiService.BuildListPanenMessage(state.SiteName, targetYear, panenList)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[LIST_PANEN] Error posting message to channel %s: %v", channelToSend, err)
+		// Fallback to contextual channel if #sawit-x-apps fails (maybe bot is not in it or string is invalid)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleListPupuk(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	pupukList, err := h.masterDataService.GetListPupuk(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[LIST_PUPUK] Error getting pupuk list for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildListPupukModal(state.SiteName, pupukList)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[LIST_PUPUK] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildListPupukMessage(state.SiteName, pupukList)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[LIST_PUPUK] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleListSemprot(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	semprotList, err := h.masterDataService.GetListSemprot(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[LIST_SEMPROT] Error getting semprot list for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildListSemprotModal(state.SiteName, semprotList)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[LIST_SEMPROT] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildListSemprotMessage(state.SiteName, semprotList)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[LIST_SEMPROT] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+
+func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	summaries, err := h.masterDataService.GetCrewDebtSummaries(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[CREW_DEBT] Error getting crew debt summaries for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildCrewDebtModal(state.SiteName, summaries)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[CREW_DEBT] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildCrewDebtMessage(state.SiteName, summaries)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[CREW_DEBT] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
 	}
 
 	w.WriteHeader(http.StatusOK)

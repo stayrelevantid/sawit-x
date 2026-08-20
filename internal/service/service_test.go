@@ -221,3 +221,38 @@ func TestGetCrewBalance_SheetError(t *testing.T) {
 		t.Error("expected error, got nil")
 	}
 }
+
+func TestGetListSemprot_ReturnsCorrectEntries(t *testing.T) {
+	mock := &mockSheetsClient{
+		readData: [][]interface{}{
+			{"log-1", "2026-03-15", "2026-03-15", "OPERASIONAL", "SITE_001",
+				"Kebun Induk", "CAT_SEMPROT", "Semprot Herbisida", "CREW_001", "Jono", "150000", "150000", "0", "0", "0", "0", "Semprot blok A"},
+			{"log-2", "2026-03-16", "2026-03-16", "OPERASIONAL", "SITE_001",
+				"Kebun Induk", "CAT_PUPUK", "Pupuk NPK", "CREW_001", "Jono", "300000", "300000"},
+			{"log-3", "2026-03-17", "2026-03-17", "OPERASIONAL", "SITE_002",
+				"Kebun Plasma", "CAT_SEMPROT", "Semprot", "CREW_002", "Slamet", "200000", "200000"},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+	list, err := svc.GetListSemprot(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 semprot entry for SITE_001, got %d", len(list))
+	}
+	if list[0].CrewName != "Jono" || list[0].Amount != 150000 || list[0].Notes != "Semprot blok A" {
+		t.Errorf("unexpected semprot entry: %+v", list[0])
+	}
+}
+
+func TestGetListSemprot_SheetError(t *testing.T) {
+	mock := &mockSheetsClient{readErr: errors.New("sheets error")}
+	svc := service.NewMasterDataService(mock)
+	_, err := svc.GetListSemprot(context.Background(), "SITE_001")
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+

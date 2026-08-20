@@ -81,8 +81,14 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					"mode_selection_block",
 					slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru")),
 					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap")),
+					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
+					slack.NewButtonBlockElement("view_rekap_hutang_pegawai", "CREW_DEBT_LIST", txt("📋 Rekap Hutang Pegawai")),
+				),
+				slack.NewActionBlock(
+					"mode_selection_block_2",
 					slack.NewButtonBlockElement("view_list_panen_1_tahun_ini", "PANEN_YEAR_THIS", txt("📅 List Panen 1 Tahun Ini")),
 					slack.NewButtonBlockElement("view_list_panen_1_tahun_lalu", "PANEN_YEAR_LAST", txt("📅 List Panen 1 Tahun Lalu")),
+					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
 				),
 			},
 		},
@@ -619,3 +625,292 @@ func (s *UIService) BuildListPanenModal(siteName string, targetYear int, panenLi
 		},
 	}
 }
+
+// BuildListPanenMessage builds a message-based report for harvest data.
+func (s *UIService) BuildListPanenMessage(siteName string, targetYear int, panenList []model.LogEntry) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md(fmt.Sprintf("📅 *LIST PANEN %d*", targetYear)), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(panenList)))),
+		slack.NewDividerBlock(),
+	}
+
+	limit := 30
+	if len(panenList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Tidak ada data panen di tahun ini."), nil, nil))
+	} else {
+		count := 0
+		for i := len(panenList) - 1; i >= 0; i-- {
+			if count >= limit {
+				blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+				break
+			}
+			p := panenList[i]
+			detail := fmt.Sprintf("🌾 *%s* | _%s_\n*Berat:* %d Kg | *Net:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, p.Weight, formatRupiah(p.AmountFinal))
+			if p.Notes != "" {
+				detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+			}
+			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+			blocks = append(blocks, slack.NewDividerBlock())
+			count++
+		}
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
+// BuildListPupukModal builds a modal displaying fertilizer purchase logs.
+func (s *UIService) BuildListPupukModal(siteName string, pupukList []model.PupukLogEntry) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt("🧪 List Pembelian Pupuk")),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(pupukList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(pupukList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat pembelian pupuk tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(pupukList) - 1; i >= 0; i-- {
+			p := pupukList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("🧪 *%s* | *PJ:* %s\n*Nominal:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(pupukList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Pembelian: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("🧪 Rekap Pupuk"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildListPupukMessage builds a message response for fertilizer purchase logs.
+func (s *UIService) BuildListPupukMessage(siteName string, pupukList []model.PupukLogEntry) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md("🧪 *LIST PEMBELIAN PUPUK*"), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(pupukList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(pupukList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat pembelian pupuk tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(pupukList) - 1; i >= 0; i-- {
+			p := pupukList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("🧪 *%s* | *PJ:* %s\n*Nominal:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(pupukList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Pembelian: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
+// BuildCrewDebtModal builds a modal displaying crew debt summary per person.
+func (s *UIService) BuildCrewDebtModal(siteName string, summaries []model.CrewDebtSummary) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt("📋 Rekap Hutang Pegawai")),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d pegawai_", siteName, len(summaries)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(summaries) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada data pegawai / hutang tercatat."), nil, nil))
+	} else {
+		var totalOutstanding int64
+		for _, c := range summaries {
+			totalOutstanding += c.OutstandingDebt
+			status := "🟢 Lunas / Tidak ada hutang"
+			if c.OutstandingDebt > 0 {
+				status = fmt.Sprintf("🔴 *Sisa Hutang:* Rp%s", formatRupiah(c.OutstandingDebt))
+			} else if c.OutstandingDebt < 0 {
+				status = fmt.Sprintf("🔵 *Lebih Bayar:* Rp%s", formatRupiah(-c.OutstandingDebt))
+			}
+
+			detail := fmt.Sprintf("👤 *%s* (_%s_)\n• Pinjam: Rp%s | Bayar: Rp%s\n%s",
+				c.CrewName, c.Role, formatRupiah(c.TotalPinjam), formatRupiah(c.TotalBayar), status)
+
+			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+			blocks = append(blocks, slack.NewDividerBlock())
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Sisa Utang Beredar: Rp%s_", formatRupiah(totalOutstanding)))))
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("📋 Hutang Pegawai"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildCrewDebtMessage builds a message response for crew debt summary per person.
+func (s *UIService) BuildCrewDebtMessage(siteName string, summaries []model.CrewDebtSummary) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md("📋 *REKAP HUTANG PEGAWAI*"), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d pegawai_", siteName, len(summaries)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(summaries) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada data pegawai / hutang tercatat."), nil, nil))
+	} else {
+		var totalOutstanding int64
+		for _, c := range summaries {
+			totalOutstanding += c.OutstandingDebt
+			status := "🟢 Lunas"
+			if c.OutstandingDebt > 0 {
+				status = fmt.Sprintf("🔴 *Utang:* Rp%s", formatRupiah(c.OutstandingDebt))
+			} else if c.OutstandingDebt < 0 {
+				status = fmt.Sprintf("🔵 *Lebih Bayar:* Rp%s", formatRupiah(-c.OutstandingDebt))
+			}
+
+			detail := fmt.Sprintf("👤 *%s* (_%s_)\n• Pinjam: Rp%s | Bayar: Rp%s | %s",
+				c.CrewName, c.Role, formatRupiah(c.TotalPinjam), formatRupiah(c.TotalBayar), status)
+
+			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+			blocks = append(blocks, slack.NewDividerBlock())
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Sisa Utang Beredar: Rp%s_", formatRupiah(totalOutstanding)))))
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
+// BuildListSemprotModal builds a modal displaying spraying operational logs.
+func (s *UIService) BuildListSemprotModal(siteName string, semprotList []model.SemprotLogEntry) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt("🌧️ List Penyemprotan")),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(semprotList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(semprotList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat penyemprotan tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(semprotList) - 1; i >= 0; i-- {
+			p := semprotList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("🌧️ *%s* | *PJ:* %s\n*Nominal:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(semprotList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Biaya Semprot: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("🌧️ Rekap Semprot"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildListSemprotMessage builds a message response for spraying operational logs.
+func (s *UIService) BuildListSemprotMessage(siteName string, semprotList []model.SemprotLogEntry) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md("🌧️ *LIST PENYEMPROTAN*"), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(semprotList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(semprotList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat penyemprotan tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(semprotList) - 1; i >= 0; i-- {
+			p := semprotList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("🌧️ *%s* | *PJ:* %s\n*Nominal:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(semprotList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Biaya Semprot: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
+

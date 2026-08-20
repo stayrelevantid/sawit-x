@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 type SiteReport struct {
 	TotalWeight      int64   `json:"total_weight"`      // Panen Kg
 	GrossIncome      int64   `json:"gross_income"`      // Total Rp from Panen
@@ -13,8 +15,33 @@ type SiteReport struct {
 	ROITracking      float64 `json:"roi_tracking"`      // Percentage (Net/Target)
 
 	// Piutang Summary
-	TotalPinjam     int64 `json:"total_pinjam"`
-	TotalBayar      int64 `json:"total_bayar"`
-	OutstandingDebt int64 `json:"outstanding_debt"` // Total Pinjam - Total Bayar
+	TotalPinjam     int64  `json:"total_pinjam"`
+	TotalBayar      int64  `json:"total_bayar"`
+	OutstandingDebt int64  `json:"outstanding_debt"` // Total Pinjam - Total Bayar
 	BEPProjection   string `json:"bep_projection"`   // e.g. "Estimasi 18 bulan lagi"
 }
+
+type PupukLogEntry struct {
+	EventDate time.Time `json:"event_date"`
+	CrewName  string    `json:"crew_name"`
+	Amount    int64     `json:"amount"`
+	Notes     string    `json:"notes"`
+}
+
+type CrewDebtSummary struct {
+	CrewID          string `json:"crew_id"`
+	CrewName        string `json:"crew_name"`
+	Role            string `json:"role"`
+	TotalPinjam     int64  `json:"total_pinjam"`
+	TotalBayar      int64  `json:"total_bayar"`
+	OutstandingDebt int64  `json:"outstanding_debt"`
+}
+
+type SemprotLogEntry struct {
+	EventDate time.Time `json:"event_date"`
+	CrewName  string    `json:"crew_name"`
+	Amount    int64     `json:"amount"`
+	Notes     string    `json:"notes"`
+}
+
+

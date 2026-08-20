@@ -49,6 +49,9 @@
 - Action Buttons:
   - **[✍️ Pencatatan Baru]**: Masuk ke menu modul (Panen/Ops/Piutang).
   - **[📊 Lihat Rekap]**: Masuk ke dashboard performa.
+  - **[🧪 List Pembelian Pupuk]**: Melihat daftar riwayat pembelian pupuk.
+  - **[🌧️ List Penyemprotan]**: Melihat daftar riwayat pengeluaran operasional penyemprotan.
+  - **[📋 Rekap Hutang Pegawai]**: Melihat rincian saldo piutang pegawai.
   - **[📅 List Panen 1 Tahun Ini]**: Melihat daftar riwayat panen selama satu tahun berjalan.
   - **[📅 List Panen 1 Tahun Lalu]**: Melihat daftar riwayat panen untuk satu tahun sebelumnya.
 

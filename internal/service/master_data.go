@@ -435,3 +435,150 @@ func (s *MasterDataService) GetListPanen(ctx context.Context, siteID string, yea
 	}
 	return results, nil
 }
+
+// GetListPupuk fetches operational log entries for category CAT_PUPUK for a site.
+func (s *MasterDataService) GetListPupuk(ctx context.Context, siteID string) ([]model.PupukLogEntry, error) {
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []model.PupukLogEntry
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		moduleType := fmt.Sprintf("%v", row[3])
+		catID := fmt.Sprintf("%v", row[6])
+
+		if rowSiteID != siteID || moduleType != "OPERASIONAL" || catID != "CAT_PUPUK" {
+			continue
+		}
+
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		notes := ""
+		if len(row) > 16 {
+			notes = fmt.Sprintf("%v", row[16])
+		}
+
+		results = append(results, model.PupukLogEntry{
+			EventDate: eventDate,
+			CrewName:  fmt.Sprintf("%v", row[9]),
+			Amount:    amount,
+			Notes:     notes,
+		})
+	}
+	return results, nil
+}
+
+// GetListSemprot fetches operational log entries for spraying categories for a site.
+func (s *MasterDataService) GetListSemprot(ctx context.Context, siteID string) ([]model.SemprotLogEntry, error) {
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []model.SemprotLogEntry
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		moduleType := fmt.Sprintf("%v", row[3])
+		catID := fmt.Sprintf("%v", row[6])
+		catName := ""
+		if len(row) > 7 {
+			catName = fmt.Sprintf("%v", row[7])
+		}
+
+		isSemprot := catID == "CAT_SEMPROT" || strings.Contains(strings.ToUpper(catID), "SEMPROT") || strings.Contains(strings.ToUpper(catName), "SEMPROT")
+
+		if rowSiteID != siteID || moduleType != "OPERASIONAL" || !isSemprot {
+			continue
+		}
+
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		notes := ""
+		if len(row) > 16 {
+			notes = fmt.Sprintf("%v", row[16])
+		}
+
+		results = append(results, model.SemprotLogEntry{
+			EventDate: eventDate,
+			CrewName:  fmt.Sprintf("%v", row[9]),
+			Amount:    amount,
+			Notes:     notes,
+		})
+	}
+	return results, nil
+}
+
+
+// GetCrewDebtSummaries calculates total pinjam, total bayar, and outstanding debt for all active crew members.
+func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID string) ([]model.CrewDebtSummary, error) {
+	crewList, err := s.GetActiveCrew(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:L")
+	if err != nil {
+		return nil, err
+	}
+
+	// Maps crewID to pinjam & bayar sums
+	pinjamMap := make(map[string]int64)
+	bayarMap := make(map[string]int64)
+
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+		moduleType := fmt.Sprintf("%v", row[3])
+		if moduleType != "PIUTANG" {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		if siteID != "" && rowSiteID != siteID {
+			continue
+		}
+
+		rowCrewID := fmt.Sprintf("%v", row[8])
+		catID := fmt.Sprintf("%v", row[6])
+		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		if catID == "PINJAM" {
+			pinjamMap[rowCrewID] += amount
+		} else if catID == "BAYAR" {
+			bayarMap[rowCrewID] += amount
+		}
+	}
+
+	var summaries []model.CrewDebtSummary
+	for _, c := range crewList {
+		if siteID != "" && c.SiteID != "" && c.SiteID != siteID {
+			continue
+		}
+		p := pinjamMap[c.ID]
+		b := bayarMap[c.ID]
+		out := p - b
+		summaries = append(summaries, model.CrewDebtSummary{
+			CrewID:          c.ID,
+			CrewName:        c.Name,
+			Role:            c.Role,
+			TotalPinjam:     p,
+			TotalBayar:      b,
+			OutstandingDebt: out,
+		})
+	}
+
+	return summaries, nil
+}
+
