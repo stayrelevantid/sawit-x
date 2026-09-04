@@ -402,7 +402,7 @@ func (s *MasterDataService) GetListPanen(ctx context.Context, siteID string, yea
 	var results []model.LogEntry
 
 	for _, row := range rows {
-		if len(row) < 16 {
+		if len(row) < 14 {
 			continue
 		}
 		rowSiteID := fmt.Sprintf("%v", row[4])
@@ -417,8 +417,17 @@ func (s *MasterDataService) GetListPanen(ctx context.Context, siteID string, yea
 			continue
 		}
 
-		weight, _ := strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
+		amountRaw, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
 		amountFinal, _ := strconv.ParseInt(fmt.Sprintf("%v", row[11]), 10, 64)
+		weight, _ := strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
+
+		var unitPrice int64
+		if len(row) > 13 {
+			unitPrice, _ = strconv.ParseInt(fmt.Sprintf("%v", row[13]), 10, 64)
+		}
+		if unitPrice == 0 && weight > 0 && amountRaw > 0 {
+			unitPrice = amountRaw / weight
+		}
 
 		notes := ""
 		if len(row) > 16 {
@@ -429,6 +438,8 @@ func (s *MasterDataService) GetListPanen(ctx context.Context, siteID string, yea
 			EventDate:   eventDate,
 			CrewName:    fmt.Sprintf("%v", row[9]),
 			Weight:      weight,
+			UnitPrice:   unitPrice,
+			AmountRaw:   amountRaw,
 			AmountFinal: amountFinal,
 			Notes:       notes,
 		})

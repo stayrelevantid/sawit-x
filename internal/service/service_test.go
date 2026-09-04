@@ -2,8 +2,12 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/indragiri/sawit-x/internal/model"
 	"github.com/indragiri/sawit-x/internal/service"
@@ -253,6 +257,103 @@ func TestGetListSemprot_SheetError(t *testing.T) {
 	_, err := svc.GetListSemprot(context.Background(), "SITE_001")
 	if err == nil {
 		t.Error("expected error, got nil")
+	}
+}
+
+func TestGetListPanen_ParsesUnitPriceAndFallback(t *testing.T) {
+	thisYearDate := fmt.Sprintf("%d-05-10", time.Now().Year())
+	lastYearDate := fmt.Sprintf("%d-05-10", time.Now().Year()-1)
+
+	mock := &mockSheetsClient{
+		readData: [][]interface{}{
+			// Panen this year with explicit UnitPrice (2500)
+			{"log-panen-1", "ts", thisYearDate, "PANEN", "SITE_001", "Kebun Induk", "CAT_PANEN", "Panen", "CREW_001", "Budi", "2500000", "2200000", "1000", "2500", "200000", "100000", "Blok A"},
+			// Panen this year with UnitPrice 0, should fallback to amountRaw / weight (3000000 / 1200 = 2500)
+			{"log-panen-2", "ts", thisYearDate, "PANEN", "SITE_001", "Kebun Induk", "CAT_PANEN", "Panen", "CREW_002", "Slamet", "3000000", "2700000", "1200", "0", "200000", "100000", "Blok B"},
+			// Panen last year
+			{"log-panen-3", "ts", lastYearDate, "PANEN", "SITE_001", "Kebun Induk", "CAT_PANEN", "Panen", "CREW_001", "Budi", "1000000", "900000", "500", "2000", "50000", "50000", "Blok C"},
+			// Different site
+			{"log-panen-4", "ts", thisYearDate, "PANEN", "SITE_002", "Kebun Plasma", "CAT_PANEN", "Panen", "CREW_001", "Budi", "5000000", "4500000", "2000", "2500", "300000", "200000", "Blok D"},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+
+	// Test this year (offset = 0)
+	panenThisYear, err := svc.GetListPanen(context.Background(), "SITE_001", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(panenThisYear) != 2 {
+		t.Fatalf("expected 2 panen entries for SITE_001 this year, got %d", len(panenThisYear))
+	}
+	if panenThisYear[0].UnitPrice != 2500 || panenThisYear[0].Weight != 1000 {
+		t.Errorf("panen 1: expected UnitPrice 2500, Weight 1000, got %+v", panenThisYear[0])
+	}
+	if panenThisYear[1].UnitPrice != 2500 || panenThisYear[1].Weight != 1200 {
+		t.Errorf("panen 2 fallback: expected UnitPrice 2500, got %+v", panenThisYear[1])
+	}
+
+	// Test last year (offset = -1)
+	panenLastYear, err := svc.GetListPanen(context.Background(), "SITE_001", -1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(panenLastYear) != 1 {
+		t.Fatalf("expected 1 panen entry for last year, got %d", len(panenLastYear))
+	}
+	if panenLastYear[0].UnitPrice != 2000 {
+		t.Errorf("panen last year: expected UnitPrice 2000, got %d", panenLastYear[0].UnitPrice)
+	}
+}
+
+func TestUIService_BuildModeSelectionModal_HasGroupedBlocks(t *testing.T) {
+	uis := service.NewUIService()
+	state := model.TransactionState{
+		SiteID:   "SITE_001",
+		SiteName: "Kebun Induk",
+	}
+
+	modal := uis.BuildModeSelectionModal(state)
+	if modal.CallbackID != "mode_selection_modal" {
+		t.Errorf("expected callback id mode_selection_modal, got %s", modal.CallbackID)
+	}
+
+	// Ensure blocks are generated
+	if len(modal.Blocks.BlockSet) < 10 {
+		t.Errorf("expected at least 10 blocks for grouped menu, got %d", len(modal.Blocks.BlockSet))
+	}
+}
+
+func TestUIService_BuildListPanenModal_ShowsUnitPrice(t *testing.T) {
+	uis := service.NewUIService()
+	panenList := []model.LogEntry{
+		{
+			EventDate:   time.Now(),
+			CrewName:    "Budi, Slamet",
+			Weight:      1500,
+			UnitPrice:   2450,
+			AmountFinal: 3200000,
+			Notes:       "Timbangan luar",
+		},
+	}
+
+	modal := uis.BuildListPanenModal("Kebun Induk", time.Now().Year(), panenList)
+	if len(modal.Blocks.BlockSet) == 0 {
+		t.Fatal("expected blocks in modal, got 0")
+	}
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "Rp2.450") {
+		t.Errorf("expected modal to contain formatted unit price Rp2.450, got %s", string(modalJSON))
+	}
+
+	msg := uis.BuildListPanenMessage("Kebun Induk", time.Now().Year(), panenList)
+	if len(msg.Blocks.BlockSet) == 0 {
+		t.Fatal("expected blocks in message, got 0")
+	}
+	msgJSON, _ := json.Marshal(msg)
+	if !strings.Contains(string(msgJSON), "Rp2.450") {
+		t.Errorf("expected message to contain formatted unit price Rp2.450, got %s", string(msgJSON))
 	}
 }
 

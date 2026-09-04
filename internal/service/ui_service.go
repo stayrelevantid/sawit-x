@@ -67,27 +67,52 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site, channelID string
 func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.ModalViewRequest {
 	stateJSON, _ := json.Marshal(state)
 
+	pencatatanBtn := slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru"))
+	pencatatanBtn.Style = slack.StylePrimary
+
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
-		Title:           txt("🌴 Pilih Mode"),
-		Close:           txt("Batal"),
+		Title:           txt("🌴 Menu Kebun"),
+		Close:           txt("Tutup"),
 		CallbackID:      "mode_selection_modal",
 		PrivateMetadata: string(stateJSON),
 		Blocks: slack.Blocks{
 			BlockSet: []slack.Block{
-				slack.NewHeaderBlock(txt(fmt.Sprintf("Kebun: %s", state.SiteName))),
-				slack.NewSectionBlock(md("Apa yang ingin Anda lakukan?"), nil, nil),
+				slack.NewHeaderBlock(txt(fmt.Sprintf("🌴 Kebun: %s", state.SiteName))),
+				slack.NewContextBlock("", md("Silakan pilih transaksi baru atau laporan yang ingin Anda akses.")),
+				slack.NewDividerBlock(),
+
+				// Group 1: Transaksi Baru
+				slack.NewSectionBlock(md("*✍️ Transaksi Baru*\n_Catat panen, pengeluaran kebun, kasbon, atau investasi._"), nil, nil),
 				slack.NewActionBlock(
-					"mode_selection_block",
-					slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru")),
-					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap")),
-					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
+					"group_transaksi_block",
+					pencatatanBtn,
+				),
+				slack.NewDividerBlock(),
+
+				// Group 2: Laporan & Keuangan
+				slack.NewSectionBlock(md("*📊 Rekap & Keuangan*\n_Ringkasan performa laba/rugi kebun dan rekap saldo kasbon pegawai._"), nil, nil),
+				slack.NewActionBlock(
+					"group_keuangan_block",
+					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap Kebun")),
 					slack.NewButtonBlockElement("view_rekap_hutang_pegawai", "CREW_DEBT_LIST", txt("📋 Rekap Hutang Pegawai")),
 				),
+				slack.NewDividerBlock(),
+
+				// Group 3: Riwayat Hasil Panen
+				slack.NewSectionBlock(md("*🌾 Riwayat Hasil Panen*\n_Daftar histori timbangan panen, harga/kg, dan pendapatan bersih._"), nil, nil),
 				slack.NewActionBlock(
-					"mode_selection_block_2",
-					slack.NewButtonBlockElement("view_list_panen_1_tahun_ini", "PANEN_YEAR_THIS", txt("📅 List Panen 1 Tahun Ini")),
-					slack.NewButtonBlockElement("view_list_panen_1_tahun_lalu", "PANEN_YEAR_LAST", txt("📅 List Panen 1 Tahun Lalu")),
+					"group_panen_block",
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_ini", "PANEN_YEAR_THIS", txt("📅 Panen 1 Tahun Ini")),
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_lalu", "PANEN_YEAR_LAST", txt("📅 Panen 1 Tahun Lalu")),
+				),
+				slack.NewDividerBlock(),
+
+				// Group 4: Log Perawatan Kebun
+				slack.NewSectionBlock(md("*🌿 Perawatan Kebun*\n_Histori pembelian pupuk dan log penyemprotan gulma/hama._"), nil, nil),
+				slack.NewActionBlock(
+					"group_perawatan_block",
+					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
 					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
 				),
 			},
@@ -600,13 +625,30 @@ func (s *UIService) BuildListPanenModal(siteName string, targetYear int, panenLi
 		blocks = append(blocks, slack.NewSectionBlock(md("😔 Tidak ada data panen di tahun ini."), nil, nil))
 	} else {
 		count := 0
+		var totalWeight int64
+		var totalNet int64
+		for _, item := range panenList {
+			totalWeight += item.Weight
+			totalNet += item.AmountFinal
+		}
+
 		for i := len(panenList) - 1; i >= 0; i-- {
 			if count >= limit {
 				blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
 				break
 			}
 			p := panenList[i]
-			detail := fmt.Sprintf("🌾 *%s* | _%s_\n*Berat:* %d Kg | *Net:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, p.Weight, formatRupiah(p.AmountFinal))
+			priceStr := "-"
+			if p.UnitPrice > 0 {
+				priceStr = formatRupiah(p.UnitPrice)
+			}
+			detail := fmt.Sprintf("🌾 *%s* | _%s_\n⚖️ *Berat:* %s Kg  •  🏷️ *Harga:* Rp%s /Kg\n💵 *Net:* Rp%s",
+				p.EventDate.Format("02 Jan 2006"),
+				p.CrewName,
+				formatRupiah(p.Weight),
+				priceStr,
+				formatRupiah(p.AmountFinal),
+			)
 			if p.Notes != "" {
 				detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
 			}
@@ -614,6 +656,7 @@ func (s *UIService) BuildListPanenModal(siteName string, targetYear int, panenLi
 			blocks = append(blocks, slack.NewDividerBlock())
 			count++
 		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("📊 *Total Panen %d:* %s Kg | *Total Net:* Rp%s", targetYear, formatRupiah(totalWeight), formatRupiah(totalNet)))))
 	}
 
 	return slack.ModalViewRequest{
@@ -639,13 +682,30 @@ func (s *UIService) BuildListPanenMessage(siteName string, targetYear int, panen
 		blocks = append(blocks, slack.NewSectionBlock(md("😔 Tidak ada data panen di tahun ini."), nil, nil))
 	} else {
 		count := 0
+		var totalWeight int64
+		var totalNet int64
+		for _, item := range panenList {
+			totalWeight += item.Weight
+			totalNet += item.AmountFinal
+		}
+
 		for i := len(panenList) - 1; i >= 0; i-- {
 			if count >= limit {
 				blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
 				break
 			}
 			p := panenList[i]
-			detail := fmt.Sprintf("🌾 *%s* | _%s_\n*Berat:* %d Kg | *Net:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, p.Weight, formatRupiah(p.AmountFinal))
+			priceStr := "-"
+			if p.UnitPrice > 0 {
+				priceStr = formatRupiah(p.UnitPrice)
+			}
+			detail := fmt.Sprintf("🌾 *%s* | _%s_\n⚖️ *Berat:* %s Kg  •  🏷️ *Harga:* Rp%s /Kg\n💵 *Net:* Rp%s",
+				p.EventDate.Format("02 Jan 2006"),
+				p.CrewName,
+				formatRupiah(p.Weight),
+				priceStr,
+				formatRupiah(p.AmountFinal),
+			)
 			if p.Notes != "" {
 				detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
 			}
@@ -653,6 +713,7 @@ func (s *UIService) BuildListPanenMessage(siteName string, targetYear int, panen
 			blocks = append(blocks, slack.NewDividerBlock())
 			count++
 		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("📊 *Total Panen %d:* %s Kg | *Total Net:* Rp%s", targetYear, formatRupiah(totalWeight), formatRupiah(totalNet)))))
 	}
 
 	return slack.Message{

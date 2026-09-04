@@ -45,15 +45,19 @@
 ### Step 3 — Modal 2: Pilih Mode (`mode_selection_modal`)
 
 **UI Slack:**
-- Header: *"Kebun: [Nama Kebun]"*
-- Action Buttons:
-  - **[✍️ Pencatatan Baru]**: Masuk ke menu modul (Panen/Ops/Piutang).
-  - **[📊 Lihat Rekap]**: Masuk ke dashboard performa.
-  - **[🧪 List Pembelian Pupuk]**: Melihat daftar riwayat pembelian pupuk.
-  - **[🌧️ List Penyemprotan]**: Melihat daftar riwayat pengeluaran operasional penyemprotan.
-  - **[📋 Rekap Hutang Pegawai]**: Melihat rincian saldo piutang pegawai.
-  - **[📅 List Panen 1 Tahun Ini]**: Melihat daftar riwayat panen selama satu tahun berjalan.
-  - **[📅 List Panen 1 Tahun Lalu]**: Melihat daftar riwayat panen untuk satu tahun sebelumnya.
+- Header: *"🌴 Kebun: [Nama Kebun]"*
+- Grouping Menu Terstruktur:
+  - **✍️ Transaksi Baru:**
+    - **[✍️ Pencatatan Baru]** *(Tombol utama hijau / Primary)*: Masuk ke menu modul (Panen/Ops/Piutang/Investasi).
+  - **📊 Rekap & Keuangan:**
+    - **[📊 Lihat Rekap Kebun]**: Masuk ke dashboard rekap performa keuangan kebun.
+    - **[📋 Rekap Hutang Pegawai]**: Melihat rincian saldo piutang pegawai.
+  - **🌾 Riwayat Hasil Panen:**
+    - **[📅 Panen 1 Tahun Ini]**: Melihat daftar riwayat panen tahun berjalan lengkap dengan berat, harga per Kg, dan pendapatan net.
+    - **[📅 Panen 1 Tahun Lalu]**: Melihat daftar riwayat panen tahun sebelumnya lengkap dengan berat, harga per Kg, dan pendapatan net.
+  - **🌿 Perawatan Kebun:**
+    - **[🧪 List Pembelian Pupuk]**: Melihat daftar riwayat pembelian pupuk dan total akumulasi.
+    - **[🌧️ List Penyemprotan]**: Melihat daftar riwayat pengeluaran operasional penyemprotan.
 
 ---
 
