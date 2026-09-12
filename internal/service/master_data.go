@@ -532,7 +532,7 @@ func (s *MasterDataService) GetListSemprot(ctx context.Context, siteID string) (
 }
 
 
-// GetCrewDebtSummaries calculates total pinjam, total bayar, and outstanding debt for all active crew members.
+// GetCrewDebtSummaries calculates total pinjam, total bayar, outstanding debt, and latest dates for all active crew members.
 func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID string) ([]model.CrewDebtSummary, error) {
 	crewList, err := s.GetActiveCrew(ctx)
 	if err != nil {
@@ -544,9 +544,11 @@ func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID str
 		return nil, err
 	}
 
-	// Maps crewID to pinjam & bayar sums
+	// Maps crewID to pinjam & bayar sums and latest dates
 	pinjamMap := make(map[string]int64)
 	bayarMap := make(map[string]int64)
+	lastPinjamMap := make(map[string]time.Time)
+	lastBayarMap := make(map[string]time.Time)
 
 	for _, row := range rows {
 		if len(row) < 11 {
@@ -565,10 +567,23 @@ func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID str
 		catID := fmt.Sprintf("%v", row[6])
 		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
 
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, errDate := time.Parse("2006-01-02", eventDateRaw)
+
 		if catID == "PINJAM" {
 			pinjamMap[rowCrewID] += amount
+			if errDate == nil {
+				if curr, ok := lastPinjamMap[rowCrewID]; !ok || eventDate.After(curr) {
+					lastPinjamMap[rowCrewID] = eventDate
+				}
+			}
 		} else if catID == "BAYAR" {
 			bayarMap[rowCrewID] += amount
+			if errDate == nil {
+				if curr, ok := lastBayarMap[rowCrewID]; !ok || eventDate.After(curr) {
+					lastBayarMap[rowCrewID] = eventDate
+				}
+			}
 		}
 	}
 
@@ -580,6 +595,18 @@ func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID str
 		p := pinjamMap[c.ID]
 		b := bayarMap[c.ID]
 		out := p - b
+
+		var lastPinjam *time.Time
+		if t, ok := lastPinjamMap[c.ID]; ok {
+			tCopy := t
+			lastPinjam = &tCopy
+		}
+		var lastBayar *time.Time
+		if t, ok := lastBayarMap[c.ID]; ok {
+			tCopy := t
+			lastBayar = &tCopy
+		}
+
 		summaries = append(summaries, model.CrewDebtSummary{
 			CrewID:          c.ID,
 			CrewName:        c.Name,
@@ -587,9 +614,59 @@ func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID str
 			TotalPinjam:     p,
 			TotalBayar:      b,
 			OutstandingDebt: out,
+			LastPinjamDate:  lastPinjam,
+			LastBayarDate:   lastBayar,
 		})
 	}
 
 	return summaries, nil
 }
+
+// GetListHutang fetches all Piutang (kasbon & bayar) log entries for a site.
+func (s *MasterDataService) GetListHutang(ctx context.Context, siteID string) ([]model.HutangLogEntry, error) {
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []model.HutangLogEntry
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+		rowSiteID := fmt.Sprintf("%v", row[4])
+		moduleType := fmt.Sprintf("%v", row[3])
+
+		if (siteID != "" && rowSiteID != siteID) || moduleType != "PIUTANG" {
+			continue
+		}
+
+		eventDateRaw := fmt.Sprintf("%v", row[2])
+		eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+		catID := fmt.Sprintf("%v", row[6])
+		crewName := fmt.Sprintf("%v", row[9])
+		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		var balance int64
+		if len(row) > 11 {
+			balance, _ = strconv.ParseInt(fmt.Sprintf("%v", row[11]), 10, 64)
+		}
+
+		notes := ""
+		if len(row) > 16 {
+			notes = fmt.Sprintf("%v", row[16])
+		}
+
+		results = append(results, model.HutangLogEntry{
+			EventDate:  eventDate,
+			CrewName:   crewName,
+			CategoryID: catID,
+			Amount:     amount,
+			Balance:    balance,
+			Notes:      notes,
+		})
+	}
+	return results, nil
+}
+
 

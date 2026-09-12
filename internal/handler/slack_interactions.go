@@ -158,6 +158,9 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 		case "view_rekap_hutang_pegawai":
 			h.handleRekapHutangPegawai(w, r, payload)
 			return
+		case "view_list_hutang_lengkap":
+			h.handleListHutangLengkap(w, r, payload)
+			return
 		case "view_list_panen_1_tahun_ini":
 			h.handleListPanen(w, r, payload, 0)
 			return
@@ -349,6 +352,7 @@ func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWrite
 	}
 
 	modal := h.uiService.BuildCrewDebtModal(state.SiteName, summaries)
+	modal.PrivateMetadata = payload.View.PrivateMetadata
 	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
 	if err != nil {
 		log.Printf("[CREW_DEBT] Error updating view: %v", err)
@@ -366,6 +370,40 @@ func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWrite
 
 	w.WriteHeader(http.StatusOK)
 }
+
+func (h *SlackInteractionsHandler) handleListHutangLengkap(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	hutangList, err := h.masterDataService.GetListHutang(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[LIST_HUTANG] Error getting hutang list for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildListHutangModal(state.SiteName, hutangList)
+	modal.PrivateMetadata = payload.View.PrivateMetadata
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[LIST_HUTANG] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildListHutangMessage(state.SiteName, hutangList)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[LIST_HUTANG] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 
 // --- Step 3a: Panen Entry ---
 func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {

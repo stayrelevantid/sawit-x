@@ -96,6 +96,7 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					"group_keuangan_block",
 					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap Kebun")),
 					slack.NewButtonBlockElement("view_rekap_hutang_pegawai", "CREW_DEBT_LIST", txt("📋 Rekap Hutang Pegawai")),
+					slack.NewButtonBlockElement("view_list_hutang_lengkap", "HUTANG_LOG_LIST", txt("📜 List Lengkap Kasbon")),
 				),
 				slack.NewDividerBlock(),
 
@@ -833,11 +834,21 @@ func (s *UIService) BuildCrewDebtModal(siteName string, summaries []model.CrewDe
 
 			detail := fmt.Sprintf("👤 *%s* (_%s_)\n• Pinjam: Rp%s | Bayar: Rp%s\n%s",
 				c.CrewName, c.Role, formatRupiah(c.TotalPinjam), formatRupiah(c.TotalBayar), status)
+			if c.LastPinjamDate != nil {
+				detail += fmt.Sprintf("\n📅 *Tgl Pinjam Terakhir:* %s", c.LastPinjamDate.Format("02 Jan 2006"))
+			}
+			if c.LastBayarDate != nil {
+				detail += fmt.Sprintf("\n💳 *Tgl Bayar Terakhir:* %s", c.LastBayarDate.Format("02 Jan 2006"))
+			}
 
 			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
 			blocks = append(blocks, slack.NewDividerBlock())
 		}
 		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Sisa Utang Beredar: Rp%s_", formatRupiah(totalOutstanding)))))
+		blocks = append(blocks, slack.NewActionBlock(
+			"crew_debt_modal_actions",
+			slack.NewButtonBlockElement("view_list_hutang_lengkap", "HUTANG_LOG_LIST", txt("📜 Lihat Riwayat Lengkap")),
+		))
 	}
 
 	return slack.ModalViewRequest{
@@ -873,6 +884,12 @@ func (s *UIService) BuildCrewDebtMessage(siteName string, summaries []model.Crew
 
 			detail := fmt.Sprintf("👤 *%s* (_%s_)\n• Pinjam: Rp%s | Bayar: Rp%s | %s",
 				c.CrewName, c.Role, formatRupiah(c.TotalPinjam), formatRupiah(c.TotalBayar), status)
+			if c.LastPinjamDate != nil {
+				detail += fmt.Sprintf("\n📅 *Tgl Pinjam:* %s", c.LastPinjamDate.Format("02 Jan 2006"))
+			}
+			if c.LastBayarDate != nil {
+				detail += fmt.Sprintf(" | 💳 *Bayar:* %s", c.LastBayarDate.Format("02 Jan 2006"))
+			}
 
 			blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
 			blocks = append(blocks, slack.NewDividerBlock())
@@ -973,5 +990,125 @@ func (s *UIService) BuildListSemprotMessage(siteName string, semprotList []model
 		},
 	}
 }
+
+// BuildListHutangModal builds a modal displaying all debt/kasbon and repayment logs.
+func (s *UIService) BuildListHutangModal(siteName string, hutangList []model.HutangLogEntry) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt("📜 Riwayat Kasbon & Pembayaran")),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(hutangList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(hutangList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat hutang/kasbon tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalPinjam int64
+		var totalBayar int64
+		for i := len(hutangList) - 1; i >= 0; i-- {
+			p := hutangList[i]
+			if p.CategoryID == "PINJAM" {
+				totalPinjam += p.Amount
+			} else if p.CategoryID == "BAYAR" {
+				totalBayar += p.Amount
+			}
+
+			if count < limit {
+				badge := "🔴 *PINJAM*"
+				if p.CategoryID == "BAYAR" {
+					badge = "🟢 *BAYAR*"
+				}
+
+				detail := fmt.Sprintf("%s | 📅 *%s* | 👤 *%s*\n*Nominal:* Rp%s",
+					badge, p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Balance != 0 {
+					detail += fmt.Sprintf(" | *Sisa Saldo:* Rp%s", formatRupiah(p.Balance))
+				}
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(hutangList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		totalOutst := totalPinjam - totalBayar
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Pinjam: Rp%s | Total Bayar: Rp%s | Sisa Utang: Rp%s_",
+			formatRupiah(totalPinjam), formatRupiah(totalBayar), formatRupiah(totalOutst)))))
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("📜 List Kasbon"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildListHutangMessage builds a message response for debt transaction logs.
+func (s *UIService) BuildListHutangMessage(siteName string, hutangList []model.HutangLogEntry) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md("📜 *LIST LENGKAP KASBON & PEMBAYARAN*"), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(hutangList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(hutangList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat hutang/kasbon tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalPinjam int64
+		var totalBayar int64
+		for i := len(hutangList) - 1; i >= 0; i-- {
+			p := hutangList[i]
+			if p.CategoryID == "PINJAM" {
+				totalPinjam += p.Amount
+			} else if p.CategoryID == "BAYAR" {
+				totalBayar += p.Amount
+			}
+
+			if count < limit {
+				badge := "🔴 *PINJAM*"
+				if p.CategoryID == "BAYAR" {
+					badge = "🟢 *BAYAR*"
+				}
+
+				detail := fmt.Sprintf("%s | 📅 *%s* | 👤 *%s*\n*Nominal:* Rp%s",
+					badge, p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Balance != 0 {
+					detail += fmt.Sprintf(" | *Sisa Saldo:* Rp%s", formatRupiah(p.Balance))
+				}
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(hutangList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		totalOutst := totalPinjam - totalBayar
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Pinjam: Rp%s | Total Bayar: Rp%s | Sisa Utang: Rp%s_",
+			formatRupiah(totalPinjam), formatRupiah(totalBayar), formatRupiah(totalOutst)))))
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
 
 

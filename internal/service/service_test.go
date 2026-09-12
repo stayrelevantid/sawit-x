@@ -15,14 +15,23 @@ import (
 
 // mockSheetsClient is a fake SheetsClient for testing without real GCP calls.
 type mockSheetsClient struct {
-	readData [][]interface{}
-	readErr  error
+	readData     [][]interface{}
+	readRangeMap map[string][][]interface{}
+	readErr      error
 	appendedRows [][]interface{}
 	appendErr    error
 }
 
 func (m *mockSheetsClient) ReadSpreadsheet(readRange string) ([][]interface{}, error) {
-	return m.readData, m.readErr
+	if m.readErr != nil {
+		return nil, m.readErr
+	}
+	if m.readRangeMap != nil {
+		if data, ok := m.readRangeMap[readRange]; ok {
+			return data, nil
+		}
+	}
+	return m.readData, nil
 }
 
 func (m *mockSheetsClient) AppendRow(sheetName string, row []interface{}) error {
@@ -356,4 +365,176 @@ func TestUIService_BuildListPanenModal_ShowsUnitPrice(t *testing.T) {
 		t.Errorf("expected message to contain formatted unit price Rp2.450, got %s", string(msgJSON))
 	}
 }
+
+func TestGetCrewDebtSummaries_CalculatesBalancesAndDates(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Crew!A2:E": {
+				{"CREW_001", "Jono", "Pemanen", "SITE_001", "ACTIVE"},
+				{"CREW_002", "Slamet", "Supir", "SITE_001", "ACTIVE"},
+			},
+			"X_LOG!A2:L": {
+				{"log-1", "ts", "2026-03-01", "PIUTANG", "SITE_001", "Kebun Induk", "PINJAM", "Pinjam", "CREW_001", "Jono", "500000", "500000"},
+				{"log-2", "ts", "2026-03-10", "PIUTANG", "SITE_001", "Kebun Induk", "PINJAM", "Pinjam", "CREW_001", "Jono", "300000", "800000"},
+				{"log-3", "ts", "2026-03-15", "PIUTANG", "SITE_001", "Kebun Induk", "BAYAR", "Bayar", "CREW_001", "Jono", "200000", "600000"},
+			},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+	summaries, err := svc.GetCrewDebtSummaries(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(summaries) != 2 {
+		t.Fatalf("expected 2 summaries, got %d", len(summaries))
+	}
+
+	jono := summaries[0]
+	if jono.CrewName != "Jono" {
+		t.Errorf("expected first crew to be Jono, got %s", jono.CrewName)
+	}
+	if jono.TotalPinjam != 800000 || jono.TotalBayar != 200000 || jono.OutstandingDebt != 600000 {
+		t.Errorf("unexpected sums for Jono: pinjam=%d bayar=%d outst=%d", jono.TotalPinjam, jono.TotalBayar, jono.OutstandingDebt)
+	}
+	if jono.LastPinjamDate == nil || jono.LastPinjamDate.Format("2006-01-02") != "2026-03-10" {
+		t.Errorf("expected Jono last pinjam date 2026-03-10, got %v", jono.LastPinjamDate)
+	}
+	if jono.LastBayarDate == nil || jono.LastBayarDate.Format("2006-01-02") != "2026-03-15" {
+		t.Errorf("expected Jono last bayar date 2026-03-15, got %v", jono.LastBayarDate)
+	}
+
+	slamet := summaries[1]
+	if slamet.OutstandingDebt != 0 || slamet.LastPinjamDate != nil || slamet.LastBayarDate != nil {
+		t.Errorf("expected zero debt and nil dates for Slamet, got %+v", slamet)
+	}
+}
+
+func TestGetListHutang_ReturnsCorrectEntries(t *testing.T) {
+	mock := &mockSheetsClient{
+		readData: [][]interface{}{
+			{"log-1", "ts", "2026-03-05", "PIUTANG", "SITE_001", "Kebun Induk", "PINJAM", "Pinjam", "CREW_001", "Jono", "500000", "500000", "", "", "", "", "Kasbon darurat"},
+			{"log-2", "ts", "2026-03-12", "PIUTANG", "SITE_001", "Kebun Induk", "BAYAR", "Bayar", "CREW_001", "Jono", "200000", "300000", "", "", "", "", "Potong panen"},
+			{"log-3", "ts", "2026-03-15", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_PUPUK", "Pupuk", "CREW_002", "Slamet", "100000", "100000"},
+			{"log-4", "ts", "2026-03-20", "PIUTANG", "SITE_002", "Kebun Plasma", "PINJAM", "Pinjam", "CREW_003", "Anto", "250000", "250000"},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+	list, err := svc.GetListHutang(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(list) != 2 {
+		t.Fatalf("expected 2 piutang entries for SITE_001, got %d", len(list))
+	}
+
+	if list[0].CrewName != "Jono" || list[0].CategoryID != "PINJAM" || list[0].Amount != 500000 || list[0].Balance != 500000 || list[0].Notes != "Kasbon darurat" {
+		t.Errorf("unexpected entry 0: %+v", list[0])
+	}
+	if list[1].CrewName != "Jono" || list[1].CategoryID != "BAYAR" || list[1].Amount != 200000 || list[1].Balance != 300000 || list[1].Notes != "Potong panen" {
+		t.Errorf("unexpected entry 1: %+v", list[1])
+	}
+}
+
+func TestUIService_BuildCrewDebtModal_ShowsDatesAndAction(t *testing.T) {
+	uis := service.NewUIService()
+	pinjamDate := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
+	bayarDate := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+
+	summaries := []model.CrewDebtSummary{
+		{
+			CrewID:          "CREW_001",
+			CrewName:        "Jono",
+			Role:            "Pemanen",
+			TotalPinjam:     800000,
+			TotalBayar:      200000,
+			OutstandingDebt: 600000,
+			LastPinjamDate:  &pinjamDate,
+			LastBayarDate:   &bayarDate,
+		},
+	}
+
+	modal := uis.BuildCrewDebtModal("Kebun Induk", summaries)
+	modalJSON, _ := json.Marshal(modal)
+	modalStr := string(modalJSON)
+
+	if !strings.Contains(modalStr, "10 Mar 2026") {
+		t.Errorf("expected modal to show pinjam date 10 Mar 2026, got %s", modalStr)
+	}
+	if !strings.Contains(modalStr, "15 Mar 2026") {
+		t.Errorf("expected modal to show bayar date 15 Mar 2026, got %s", modalStr)
+	}
+	if !strings.Contains(modalStr, "view_list_hutang_lengkap") {
+		t.Errorf("expected modal to contain action button view_list_hutang_lengkap, got %s", modalStr)
+	}
+
+	msg := uis.BuildCrewDebtMessage("Kebun Induk", summaries)
+	msgJSON, _ := json.Marshal(msg)
+	msgStr := string(msgJSON)
+	if !strings.Contains(msgStr, "10 Mar 2026") {
+		t.Errorf("expected message to show pinjam date 10 Mar 2026, got %s", msgStr)
+	}
+}
+
+func TestUIService_BuildListHutangModalAndMessage(t *testing.T) {
+	uis := service.NewUIService()
+	eventDate := time.Date(2026, 3, 12, 0, 0, 0, 0, time.UTC)
+
+	entries := []model.HutangLogEntry{
+		{
+			EventDate:  eventDate,
+			CrewName:   "Jono",
+			CategoryID: "PINJAM",
+			Amount:     500000,
+			Balance:    500000,
+			Notes:      "Kasbon berobat",
+		},
+		{
+			EventDate:  eventDate.AddDate(0, 0, 2),
+			CrewName:   "Jono",
+			CategoryID: "BAYAR",
+			Amount:     200000,
+			Balance:    300000,
+			Notes:      "Cicilan pertama",
+		},
+	}
+
+	modal := uis.BuildListHutangModal("Kebun Induk", entries)
+	modalJSON, _ := json.Marshal(modal)
+	modalStr := string(modalJSON)
+
+	if !strings.Contains(modalStr, "PINJAM") || !strings.Contains(modalStr, "BAYAR") {
+		t.Errorf("expected modal to contain PINJAM and BAYAR, got %s", modalStr)
+	}
+	if !strings.Contains(modalStr, "Kasbon berobat") || !strings.Contains(modalStr, "Cicilan pertama") {
+		t.Errorf("expected modal to contain notes, got %s", modalStr)
+	}
+	if !strings.Contains(modalStr, "Sisa Utang: Rp300.000") {
+		t.Errorf("expected modal to display total sisa utang Rp300.000, got %s", modalStr)
+	}
+
+	msg := uis.BuildListHutangMessage("Kebun Induk", entries)
+	msgJSON, _ := json.Marshal(msg)
+	msgStr := string(msgJSON)
+	if !strings.Contains(msgStr, "LIST LENGKAP KASBON") || !strings.Contains(msgStr, "PEMBAYARAN") {
+		t.Errorf("expected message header, got %s", msgStr)
+	}
+	if !strings.Contains(msgStr, "Sisa Utang: Rp300.000") {
+		t.Errorf("expected message to show sisa utang Rp300.000, got %s", msgStr)
+	}
+}
+
+func TestUIService_BuildModeSelectionModal_HasListHutangButton(t *testing.T) {
+	uis := service.NewUIService()
+	state := model.TransactionState{SiteID: "SITE_001", SiteName: "Kebun Induk"}
+	modal := uis.BuildModeSelectionModal(state)
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "view_list_hutang_lengkap") {
+		t.Errorf("expected mode selection modal to contain view_list_hutang_lengkap button, got %s", string(modalJSON))
+	}
+}
+
 

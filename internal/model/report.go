@@ -29,12 +29,14 @@ type PupukLogEntry struct {
 }
 
 type CrewDebtSummary struct {
-	CrewID          string `json:"crew_id"`
-	CrewName        string `json:"crew_name"`
-	Role            string `json:"role"`
-	TotalPinjam     int64  `json:"total_pinjam"`
-	TotalBayar      int64  `json:"total_bayar"`
-	OutstandingDebt int64  `json:"outstanding_debt"`
+	CrewID          string     `json:"crew_id"`
+	CrewName        string     `json:"crew_name"`
+	Role            string     `json:"role"`
+	TotalPinjam     int64      `json:"total_pinjam"`
+	TotalBayar      int64      `json:"total_bayar"`
+	OutstandingDebt int64      `json:"outstanding_debt"`
+	LastPinjamDate  *time.Time `json:"last_pinjam_date,omitempty"`
+	LastBayarDate   *time.Time `json:"last_bayar_date,omitempty"`
 }
 
 type SemprotLogEntry struct {
@@ -42,6 +44,15 @@ type SemprotLogEntry struct {
 	CrewName  string    `json:"crew_name"`
 	Amount    int64     `json:"amount"`
 	Notes     string    `json:"notes"`
+}
+
+type HutangLogEntry struct {
+	EventDate  time.Time `json:"event_date"`
+	CrewName   string    `json:"crew_name"`
+	CategoryID string    `json:"category_id"` // "PINJAM" or "BAYAR"
+	Amount     int64     `json:"amount"`
+	Balance    int64     `json:"balance"`
+	Notes      string    `json:"notes"`
 }
 
 

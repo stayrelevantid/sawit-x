@@ -51,7 +51,8 @@
     - **[✍️ Pencatatan Baru]** *(Tombol utama hijau / Primary)*: Masuk ke menu modul (Panen/Ops/Piutang/Investasi).
   - **📊 Rekap & Keuangan:**
     - **[📊 Lihat Rekap Kebun]**: Masuk ke dashboard rekap performa keuangan kebun.
-    - **[📋 Rekap Hutang Pegawai]**: Melihat rincian saldo piutang pegawai.
+    - **[📋 Rekap Hutang Pegawai]**: Melihat rincian saldo piutang pegawai beserta tanggal kasbon/bayar terakhir dan shortcut riwayat lengkap.
+    - **[📜 List Lengkap Kasbon]**: Melihat rincian seluruh mutasi pinjaman & pembayaran kasbon (tanggal, pegawai, tipe, nominal, sisa saldo, dan catatan).
   - **🌾 Riwayat Hasil Panen:**
     - **[📅 Panen 1 Tahun Ini]**: Melihat daftar riwayat panen tahun berjalan lengkap dengan berat, harga per Kg, dan pendapatan net.
     - **[📅 Panen 1 Tahun Lalu]**: Melihat daftar riwayat panen tahun sebelumnya lengkap dengan berat, harga per Kg, dan pendapatan net.
