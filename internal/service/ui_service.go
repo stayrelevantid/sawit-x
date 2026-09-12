@@ -110,11 +110,12 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 				slack.NewDividerBlock(),
 
 				// Group 4: Log Perawatan Kebun
-				slack.NewSectionBlock(md("*🌿 Perawatan Kebun*\n_Histori pembelian pupuk dan log penyemprotan gulma/hama._"), nil, nil),
+				slack.NewSectionBlock(md("*🌿 Perawatan Kebun*\n_Histori pembelian pupuk, penyemprotan, dan ongkos pruning._"), nil, nil),
 				slack.NewActionBlock(
 					"group_perawatan_block",
 					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
 					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
+					slack.NewButtonBlockElement("view_list_pruning", "PRUNING_LIST", txt("✂️ List Pruning")),
 				),
 			},
 		},
@@ -1031,6 +1032,91 @@ func (s *UIService) BuildListSemprotMessage(siteName string, semprotList []model
 	}
 }
 
+// BuildListPruningModal builds a modal displaying pruning operational logs.
+func (s *UIService) BuildListPruningModal(siteName string, pruningList []model.PruningLogEntry) slack.ModalViewRequest {
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt("✂️ List Pruning")),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(pruningList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(pruningList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat pruning tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(pruningList) - 1; i >= 0; i-- {
+			p := pruningList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("✂️ *%s* | *PJ:* %s\n*Ongkos:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(pruningList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Ongkos Pruning: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.ModalViewRequest{
+		Type:  slack.VTModal,
+		Title: txt("✂️ Rekap Pruning"),
+		Close: txt("Tutup"),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildListPruningMessage builds a message response for pruning operational logs.
+func (s *UIService) BuildListPruningMessage(siteName string, pruningList []model.PruningLogEntry) slack.Message {
+	blocks := []slack.Block{
+		slack.NewSectionBlock(md("✂️ *LIST PRUNING*"), nil, nil),
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s | Total: %d transaksi_", siteName, len(pruningList)))),
+		slack.NewDividerBlock(),
+	}
+
+	if len(pruningList) == 0 {
+		blocks = append(blocks, slack.NewSectionBlock(md("😔 Belum ada riwayat pruning tercatat."), nil, nil))
+	} else {
+		limit := 30
+		count := 0
+		var totalNominal int64
+		for i := len(pruningList) - 1; i >= 0; i-- {
+			p := pruningList[i]
+			totalNominal += p.Amount
+			if count < limit {
+				detail := fmt.Sprintf("✂️ *%s* | *PJ:* %s\n*Ongkos:* Rp%s", p.EventDate.Format("02 Jan 2006"), p.CrewName, formatRupiah(p.Amount))
+				if p.Notes != "" {
+					detail += fmt.Sprintf("\n📝 _Catatan: %s_", p.Notes)
+				}
+				blocks = append(blocks, slack.NewSectionBlock(md(detail), nil, nil))
+				blocks = append(blocks, slack.NewDividerBlock())
+				count++
+			}
+		}
+		if len(pruningList) > limit {
+			blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Data dibatasi %d transaksi terbaru_", limit))))
+		}
+		blocks = append(blocks, slack.NewContextBlock("", md(fmt.Sprintf("_Total Akumulasi Ongkos Pruning: Rp%s_", formatRupiah(totalNominal)))))
+	}
+
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: blocks,
+			},
+		},
+	}
+}
+
 // BuildListHutangModal builds a modal displaying all debt/kasbon and repayment logs.
 func (s *UIService) BuildListHutangModal(siteName string, hutangList []model.HutangLogEntry) slack.ModalViewRequest {
 	blocks := []slack.Block{
@@ -1149,6 +1235,3 @@ func (s *UIService) BuildListHutangMessage(siteName string, hutangList []model.H
 		},
 	}
 }
-
-
-

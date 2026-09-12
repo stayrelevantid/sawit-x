@@ -27,9 +27,9 @@ type SiteReport struct {
 	TotalOtherOpsCost int64 `json:"total_other_ops_cost"` // Biaya Operasional Lainnya
 
 	// Status Kesehatan & Narasi Bahasa Bayi
-	HealthStatus     string `json:"health_status"`      // e.g. "🟢 UNTUNG & SEHAT"
-	HealthEmoji      string `json:"health_emoji"`       // e.g. "🟢"
-	SummaryNarration string `json:"summary_narration"`  // Narasi bahasa bayi ringkas
+	HealthStatus     string `json:"health_status"`     // e.g. "🟢 UNTUNG & SEHAT"
+	HealthEmoji      string `json:"health_emoji"`      // e.g. "🟢"
+	SummaryNarration string `json:"summary_narration"` // Narasi bahasa bayi ringkas
 
 	// Piutang Summary
 	TotalPinjam     int64  `json:"total_pinjam"`
@@ -63,6 +63,13 @@ type SemprotLogEntry struct {
 	Notes     string    `json:"notes"`
 }
 
+type PruningLogEntry struct {
+	EventDate time.Time `json:"event_date"`
+	CrewName  string    `json:"crew_name"`
+	Amount    int64     `json:"amount"`
+	Notes     string    `json:"notes"`
+}
+
 type HutangLogEntry struct {
 	EventDate  time.Time `json:"event_date"`
 	CrewName   string    `json:"crew_name"`
@@ -71,5 +78,3 @@ type HutangLogEntry struct {
 	Balance    int64     `json:"balance"`
 	Notes      string    `json:"notes"`
 }
-
-

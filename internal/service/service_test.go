@@ -269,6 +269,40 @@ func TestGetListSemprot_SheetError(t *testing.T) {
 	}
 }
 
+func TestGetListPruning_ReturnsCorrectEntries(t *testing.T) {
+	mock := &mockSheetsClient{
+		readData: [][]interface{}{
+			{"log-1", "2026-03-15", "2026-03-15", "OPERASIONAL", "SITE_001",
+				"Kebun Induk", "CAT_PRUNING", "Pruning", "CREW_001", "Jono", "250000", "250000", "0", "0", "0", "0", "Pangkas pelepah blok B"},
+			{"log-2", "2026-03-16", "2026-03-16", "OPERASIONAL", "SITE_001",
+				"Kebun Induk", "CAT_PUPUK", "Pupuk NPK", "CREW_001", "Jono", "300000", "300000"},
+			{"log-3", "2026-03-17", "2026-03-17", "OPERASIONAL", "SITE_002",
+				"Kebun Plasma", "CAT_PRUNING", "Pruning", "CREW_002", "Slamet", "200000", "200000"},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+	list, err := svc.GetListPruning(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 pruning entry for SITE_001, got %d", len(list))
+	}
+	if list[0].CrewName != "Jono" || list[0].Amount != 250000 || list[0].Notes != "Pangkas pelepah blok B" {
+		t.Errorf("unexpected pruning entry: %+v", list[0])
+	}
+}
+
+func TestGetListPruning_SheetError(t *testing.T) {
+	mock := &mockSheetsClient{readErr: errors.New("sheets error")}
+	svc := service.NewMasterDataService(mock)
+	_, err := svc.GetListPruning(context.Background(), "SITE_001")
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
 func TestGetListPanen_ParsesUnitPriceAndFallback(t *testing.T) {
 	thisYearDate := fmt.Sprintf("%d-05-10", time.Now().Year())
 	lastYearDate := fmt.Sprintf("%d-05-10", time.Now().Year()-1)

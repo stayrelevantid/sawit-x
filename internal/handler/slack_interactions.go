@@ -170,6 +170,9 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 		case "view_list_semprot":
 			h.handleListSemprot(w, r, payload)
 			return
+		case "view_list_pruning":
+			h.handleListPruning(w, r, payload)
+			return
 		}
 	}
 	w.WriteHeader(http.StatusOK)
@@ -257,9 +260,9 @@ func (h *SlackInteractionsHandler) handleListPanen(w http.ResponseWriter, r *htt
 		// If invoked from a specific public/private channel, reply there, but explicitly fallback/override as requested.
 		// Since user explicitly asked for "channel sawit-x-apps", we'll broadcast it there to be safe.
 		// We can also post to state.ChannelID if they differ. To be simple, we'll force "#sawit-x-apps".
-		channelToSend = "#sawit-x-apps" 
+		channelToSend = "#sawit-x-apps"
 	}
-	
+
 	msg := h.uiService.BuildListPanenMessage(state.SiteName, targetYear, panenList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -337,6 +340,37 @@ func (h *SlackInteractionsHandler) handleListSemprot(w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *SlackInteractionsHandler) handleListPruning(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	pruningList, err := h.masterDataService.GetListPruning(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[LIST_PRUNING] Error getting pruning list for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildListPruningModal(state.SiteName, pruningList)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[LIST_PRUNING] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildListPruningMessage(state.SiteName, pruningList)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[LIST_PRUNING] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
 
 func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
 	ctx := r.Context()
@@ -403,7 +437,6 @@ func (h *SlackInteractionsHandler) handleListHutangLengkap(w http.ResponseWriter
 
 	w.WriteHeader(http.StatusOK)
 }
-
 
 // --- Step 3a: Panen Entry ---
 func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
@@ -578,7 +611,7 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
 
 	actionOption := values["action_block"]["piutang_action"].SelectedOption
-	actionID := actionOption.Value   // PINJAM or BAYAR
+	actionID := actionOption.Value // PINJAM or BAYAR
 	actionName := actionOption.Text.Text
 
 	eventDate := values["date_block"]["event_date"].SelectedDate
@@ -637,7 +670,7 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 
 func (h *SlackInteractionsHandler) sendSuccessNotification(userID string, entry model.LogEntry) {
 	msg := h.uiService.BuildSuccessResponse(entry)
-	
+
 	// 1. Send to User DM
 	_, _, err := h.slackClient.PostMessage(userID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
