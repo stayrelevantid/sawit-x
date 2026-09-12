@@ -537,4 +537,189 @@ func TestUIService_BuildModeSelectionModal_HasListHutangButton(t *testing.T) {
 	}
 }
 
+func TestGetSiteReport_ComprehensiveAndBabyLanguage(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_001", "Kebun Induk", "Kalimantan", "ACTIVE", "100000000"},
+			},
+			"X_LOG!A2:Q": {
+				// Panen 1: 2.000 kg, Gross 5.000.000, Upah 1.000.000, Trans 500.000
+				{"LOG_01", "2026-01-10T10:00:00Z", "2026-01-10", "PANEN", "SITE_001", "Kebun Induk", "CAT_PANEN", "Panen", "C_01", "Budi", "5000000", "3500000", "2000", "2500", "1000000", "500000", "Panen Putaran 1"},
+				// Panen 2: 3.000 kg, Gross 7.500.000, Upah 1.500.000, Trans 750.000
+				{"LOG_02", "2026-02-10T10:00:00Z", "2026-02-10", "PANEN", "SITE_001", "Kebun Induk", "CAT_PANEN", "Panen", "C_01", "Budi", "7500000", "5250000", "3000", "2500", "1500000", "750000", "Panen Putaran 2"},
+				// Operasional: Pupuk
+				{"LOG_03", "2026-01-15T10:00:00Z", "2026-01-15", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_PUPUK", "Pupuk", "C_02", "Jono", "2000000", "-2000000", "", "", "", "", "Beli pupuk NPK"},
+				// Operasional: Semprot
+				{"LOG_04", "2026-01-20T10:00:00Z", "2026-01-20", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_SEMPROT", "Semprot", "C_02", "Jono", "1000000", "-1000000", "", "", "", "", "Beli racun herbisida"},
+				// Operasional: Lainnya
+				{"LOG_05", "2026-02-01T10:00:00Z", "2026-02-01", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_LAIN", "Perawatan", "C_02", "Jono", "500000", "-500000", "", "", "", "", "Perbaikan jalan kebun"},
+				// Piutang: Pinjam & Bayar
+				{"LOG_06", "2026-01-05T10:00:00Z", "2026-01-05", "PIUTANG", "SITE_001", "Kebun Induk", "PINJAM", "Kasbon", "C_01", "Budi", "1000000", "-1000000", "", "", "", "", "Kasbon awal"},
+				{"LOG_07", "2026-02-05T10:00:00Z", "2026-02-05", "PIUTANG", "SITE_001", "Kebun Induk", "BAYAR", "Bayar Kasbon", "C_01", "Budi", "400000", "400000", "", "", "", "", "Cicil kasbon"},
+				// Investasi: Tambah Modal
+				{"LOG_08", "2026-01-01T10:00:00Z", "2026-01-01", "INVESTASI", "SITE_001", "Kebun Induk", "CAT_INV", "Investasi", "", "", "10000000", "-10000000", "", "", "", "", "Beli bibit sisipan"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Validasi Panen
+	if report.HarvestCount != 2 {
+		t.Errorf("expected HarvestCount 2, got %d", report.HarvestCount)
+	}
+	if report.TotalWeight != 5000 {
+		t.Errorf("expected TotalWeight 5000, got %d", report.TotalWeight)
+	}
+	if report.AvgHarvestWeight != 2500 {
+		t.Errorf("expected AvgHarvestWeight 2500, got %d", report.AvgHarvestWeight)
+	}
+	if report.GrossIncome != 12500000 {
+		t.Errorf("expected GrossIncome 12500000, got %d", report.GrossIncome)
+	}
+	if report.AvgPricePerKg != 2500 {
+		t.Errorf("expected AvgPricePerKg 2500, got %d", report.AvgPricePerKg)
+	}
+
+	// 2. Validasi Biaya Operasional Terurai
+	if report.TotalUpah != 2500000 {
+		t.Errorf("expected TotalUpah 2500000, got %d", report.TotalUpah)
+	}
+	if report.TotalTransport != 1250000 {
+		t.Errorf("expected TotalTransport 1250000, got %d", report.TotalTransport)
+	}
+	if report.TotalPupukCost != 2000000 {
+		t.Errorf("expected TotalPupukCost 2000000, got %d", report.TotalPupukCost)
+	}
+	if report.TotalSemprotCost != 1000000 {
+		t.Errorf("expected TotalSemprotCost 1000000, got %d", report.TotalSemprotCost)
+	}
+	if report.TotalOtherOpsCost != 500000 {
+		t.Errorf("expected TotalOtherOpsCost 500000, got %d", report.TotalOtherOpsCost)
+	}
+	expectedOpex := int64(2500000 + 1250000 + 2000000 + 1000000 + 500000)
+	if report.OperationalCost != expectedOpex {
+		t.Errorf("expected OperationalCost %d, got %d", expectedOpex, report.OperationalCost)
+	}
+	if report.CostPerKg != expectedOpex/5000 {
+		t.Errorf("expected CostPerKg %d, got %d", expectedOpex/5000, report.CostPerKg)
+	}
+
+	// 3. Validasi Keuntungan Bersih & Modal
+	expectedNet := 12500000 - expectedOpex // 12.500.000 - 7.250.000 = 5.250.000
+	if report.NetProfit != expectedNet {
+		t.Errorf("expected NetProfit %d, got %d", expectedNet, report.NetProfit)
+	}
+	if report.ProfitPerKg != expectedNet/5000 {
+		t.Errorf("expected ProfitPerKg %d, got %d", expectedNet/5000, report.ProfitPerKg)
+	}
+	expectedTarget := int64(100000000 + 10000000) // 110.000.000
+	if report.TargetModal != expectedTarget {
+		t.Errorf("expected TargetModal %d, got %d", expectedTarget, report.TargetModal)
+	}
+	expectedRemaining := expectedTarget - expectedNet
+	if report.RemainingCapital != expectedRemaining {
+		t.Errorf("expected RemainingCapital %d, got %d", expectedRemaining, report.RemainingCapital)
+	}
+
+	// 4. Validasi Kasbon Pegawai
+	if report.TotalPinjam != 1000000 || report.TotalBayar != 400000 || report.OutstandingDebt != 600000 {
+		t.Errorf("kasbon mismatch: pinjam=%d bayar=%d outst=%d", report.TotalPinjam, report.TotalBayar, report.OutstandingDebt)
+	}
+
+	// 5. Validasi Status Kesehatan & Narasi Bahasa Bayi
+	if !strings.Contains(report.HealthStatus, "SEHAT") {
+		t.Errorf("expected health status to indicate SEHAT, got %s", report.HealthStatus)
+	}
+	if !strings.Contains(report.SummaryNarration, "5.000 Kg") || !strings.Contains(report.SummaryNarration, "5.250.000") {
+		t.Errorf("expected summary narration to contain key details, got %s", report.SummaryNarration)
+	}
+
+	// 6. Validasi UI Modal & Message Generation
+	uis := service.NewUIService()
+	modal := uis.BuildReportModal("Kebun Induk", report)
+	modalJSON, _ := json.Marshal(modal)
+	modalStr := string(modalJSON)
+
+	if !strings.Contains(modalStr, "1. HASIL PANEN SAWIT") || !strings.Contains(modalStr, "2. PENGELUARAN") {
+		t.Errorf("expected modal to contain structured numbered sections, got %s", modalStr)
+	}
+	if !strings.Contains(modalStr, "5.250.000") || !strings.Contains(modalStr, "Untung Bersih (Kantong)") {
+		t.Errorf("expected modal to contain Untung Bersih, got %s", modalStr)
+	}
+
+	msg := uis.BuildReportMessage("Kebun Induk", report)
+	msgJSON, _ := json.Marshal(msg)
+	msgStr := string(msgJSON)
+	if !strings.Contains(msgStr, "REKAP PERFORMA KEBUN") || !strings.Contains(msgStr, "Kesimpulan Ringkas") {
+		t.Errorf("expected message to contain executive summary, got %s", msgStr)
+	}
+}
+
+func TestGetSiteReport_BEPTercapai(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_002", "Kebun Berjaya", "Sumatera", "ACTIVE", "10000000"},
+			},
+			"X_LOG!A2:Q": {
+				{"LOG_01", "2026-01-01T10:00:00Z", "2026-01-01", "PANEN", "SITE_002", "Kebun Berjaya", "CAT_PANEN", "Panen", "", "", "25000000", "20000000", "10000", "2500", "3000000", "2000000", "Panen Raya"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_002")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if report.RemainingCapital != 0 {
+		t.Errorf("expected RemainingCapital 0 when BEP reached, got %d", report.RemainingCapital)
+	}
+	if !strings.Contains(report.HealthStatus, "BALIK MODAL PENUH") {
+		t.Errorf("expected health status to indicate BALIK MODAL PENUH, got %s", report.HealthStatus)
+	}
+	if !strings.Contains(report.SummaryNarration, "kembali 100%") {
+		t.Errorf("expected summary narration to mention kembali 100%%, got %s", report.SummaryNarration)
+	}
+}
+
+func TestGetSiteReport_Defisit(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_003", "Kebun Baru Beli", "Riau", "ACTIVE", "50000000"},
+			},
+			"X_LOG!A2:Q": {
+				// Panen kecil
+				{"LOG_01", "2026-01-10T10:00:00Z", "2026-01-10", "PANEN", "SITE_003", "Kebun Baru Beli", "CAT_PANEN", "Panen", "", "", "1000000", "500000", "500", "2000", "300000", "200000", "Panen Awal"},
+				// Operasional besar
+				{"LOG_02", "2026-01-15T10:00:00Z", "2026-01-15", "OPERASIONAL", "SITE_003", "Kebun Baru Beli", "CAT_PUPUK", "Pupuk", "", "", "5000000", "-5000000", "", "", "", "", "Pupuk Awal"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_003")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if report.NetProfit >= 0 {
+		t.Errorf("expected negative NetProfit (deficit), got %d", report.NetProfit)
+	}
+	if !strings.Contains(report.HealthStatus, "DEFISIT") {
+		t.Errorf("expected health status to indicate DEFISIT, got %s", report.HealthStatus)
+	}
+	if !strings.Contains(report.SummaryNarration, "defisit") {
+		t.Errorf("expected summary narration to mention defisit, got %s", report.SummaryNarration)
+	}
+}
+
 

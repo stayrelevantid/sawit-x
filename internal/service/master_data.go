@@ -213,27 +213,30 @@ func (s *MasterDataService) GetCrewBalance(ctx context.Context, crewID string) (
 func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (model.SiteReport, error) {
 	// 1. Get Target Modal from Sites master
 	sites, _ := s.GetActiveSites(ctx)
-	var targetModal int64
+	var initialTargetModal int64
 	for _, site := range sites {
 		if site.ID == siteID {
-			targetModal = site.TargetModal
+			initialTargetModal = site.TargetModal
 			break
 		}
 	}
 
-	// 2. Fetch all logs for this site
+	// 2. Fetch all logs for this site (Col A to Q)
 	// Column order: [0]log_id, [1]timestamp, [2]event_date, [3]module_type, [4]site_id, [5]site_name,
-	// [10]amount_raw (Gross/Expense), [11]amount_final (Net), [12]weight, [13]unit_price, [14]labor_cost, [15]transport_cost
-	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:P")
+	// [6]category_id, [7]category_name, [8]crew_id, [9]crew_name,
+	// [10]amount_raw (Gross/Expense), [11]amount_final (Net), [12]weight, [13]unit_price, [14]labor_cost, [15]transport_cost, [16]notes
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
 	if err != nil {
 		return model.SiteReport{}, err
 	}
 
 	var report model.SiteReport
-	report.TargetModal = targetModal
+	report.TargetModal = initialTargetModal
+
+	var firstDate, lastDate time.Time
 
 	for _, row := range rows {
-		if len(row) < 12 {
+		if len(row) < 11 {
 			continue
 		}
 		rowSiteID := fmt.Sprintf("%v", row[4])
@@ -241,11 +244,26 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 			continue
 		}
 
+		// Track date range for BEP projection
+		if len(row) >= 3 {
+			eventDateRaw := fmt.Sprintf("%v", row[2])
+			eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+			if !eventDate.IsZero() {
+				if firstDate.IsZero() || eventDate.Before(firstDate) {
+					firstDate = eventDate
+				}
+				if eventDate.After(lastDate) {
+					lastDate = eventDate
+				}
+			}
+		}
+
 		moduleType := fmt.Sprintf("%v", row[3])
 		amountRaw, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
 
 		switch moduleType {
 		case "PANEN":
+			report.HarvestCount++
 			if len(row) >= 16 {
 				weight, _ := strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
 				labor, _ := strconv.ParseInt(fmt.Sprintf("%v", row[14]), 10, 64)
@@ -256,61 +274,85 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 				report.TotalUpah += labor
 				report.TotalTransport += transport
 				report.OperationalCost += (labor + transport)
+			} else {
+				report.GrossIncome += amountRaw
 			}
+
 		case "OPERASIONAL":
 			report.TotalOperasional += amountRaw
 			report.OperationalCost += amountRaw
+
+			// Breakdown kategori operasional
+			catID := ""
+			if len(row) > 6 {
+				catID = strings.ToUpper(fmt.Sprintf("%v", row[6]))
+			}
+			catName := ""
+			if len(row) > 7 {
+				catName = strings.ToUpper(fmt.Sprintf("%v", row[7]))
+			}
+			notes := ""
+			if len(row) > 16 {
+				notes = strings.ToUpper(fmt.Sprintf("%v", row[16]))
+			}
+
+			isPupuk := catID == "CAT_PUPUK" || strings.Contains(catID, "PUPUK") || strings.Contains(catName, "PUPUK") || strings.Contains(notes, "PUPUK")
+			isSemprot := catID == "CAT_SEMPROT" || strings.Contains(catID, "SEMPROT") || strings.Contains(catName, "SEMPROT") || strings.Contains(notes, "SEMPROT") || strings.Contains(notes, "HERBISIDA") || strings.Contains(notes, "RACUN")
+
+			if isPupuk {
+				report.TotalPupukCost += amountRaw
+			} else if isSemprot {
+				report.TotalSemprotCost += amountRaw
+			} else {
+				report.TotalOtherOpsCost += amountRaw
+			}
+
 		case "PIUTANG":
-			catID := fmt.Sprintf("%v", row[6])
+			catID := ""
+			if len(row) > 6 {
+				catID = fmt.Sprintf("%v", row[6])
+			}
 			if catID == "PINJAM" {
 				report.TotalPinjam += amountRaw
 			} else if catID == "BAYAR" {
 				report.TotalBayar += amountRaw
 			}
+
 		case "INVESTASI":
 			report.TargetModal += amountRaw
 		}
 	}
 
+	// 3. Hitung Finansial & Kasbon
 	report.OutstandingDebt = report.TotalPinjam - report.TotalBayar
-
 	report.NetProfit = report.GrossIncome - report.OperationalCost
-	report.RemainingCapital = targetModal - report.NetProfit
-	if report.RemainingCapital < 0 {
-		report.RemainingCapital = 0
+
+	if report.TargetModal > 0 {
+		if report.NetProfit >= report.TargetModal {
+			report.RemainingCapital = 0
+		} else if report.NetProfit <= 0 {
+			report.RemainingCapital = report.TargetModal
+		} else {
+			report.RemainingCapital = report.TargetModal - report.NetProfit
+		}
+		report.ROITracking = (float64(report.NetProfit) / float64(report.TargetModal)) * 100
 	}
 
-	if targetModal > 0 {
-		report.ROITracking = (float64(report.NetProfit) / float64(targetModal)) * 100
+	// 4. Hitung Metrik Per-Kg & Produktivitas
+	if report.HarvestCount > 0 {
+		report.AvgHarvestWeight = report.TotalWeight / int64(report.HarvestCount)
+	}
+	if report.TotalWeight > 0 {
+		report.AvgPricePerKg = report.GrossIncome / report.TotalWeight
+		report.CostPerKg = report.OperationalCost / report.TotalWeight
+		report.ProfitPerKg = report.NetProfit / report.TotalWeight
 	}
 
-	// 5. Calculate BEP Projection
-	var firstDate, lastDate time.Time
-	for _, row := range rows {
-		if len(row) < 3 {
-			continue
-		}
-		rowSiteID := fmt.Sprintf("%v", row[4])
-		if rowSiteID != siteID {
-			continue
-		}
-		eventDateRaw := fmt.Sprintf("%v", row[2])
-		eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
-		if !eventDate.IsZero() {
-			if firstDate.IsZero() || eventDate.Before(firstDate) {
-				firstDate = eventDate
-			}
-			if eventDate.After(lastDate) {
-				lastDate = eventDate
-			}
-		}
-	}
-
+	// 5. Proyeksi Balik Modal (BEP)
 	if !firstDate.IsZero() && !lastDate.IsZero() {
-		// Use months span
 		days := lastDate.Sub(firstDate).Hours() / 24
 		if days < 30 {
-			days = 30 // Minimum 1 month for average
+			days = 30 // Minimum 1 bulan untuk perataan
 		}
 		avgDailyProfit := float64(report.NetProfit) / days
 		avgMonthlyProfit := avgDailyProfit * 30.44
@@ -322,13 +364,42 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 			} else {
 				report.BEPProjection = fmt.Sprintf("Estimasi %.1f bulan lagi", monthsRemaining)
 			}
-		} else if report.RemainingCapital <= 0 && targetModal > 0 {
+		} else if report.RemainingCapital <= 0 && report.TargetModal > 0 {
 			report.BEPProjection = "SUDAH BALIK MODAL (BEP) ✅"
+		} else if report.NetProfit <= 0 {
+			report.BEPProjection = "Belum profit (masih defisit)"
 		} else {
 			report.BEPProjection = "Data belum mencukupi untuk estimasi"
 		}
 	} else {
 		report.BEPProjection = "Belum ada data transaksi"
+	}
+
+	// 6. Tentukan Status Kesehatan & Narasi Bahasa Bayi
+	if report.TotalWeight == 0 && report.GrossIncome == 0 && report.OperationalCost == 0 {
+		report.HealthEmoji = "⚪"
+		report.HealthStatus = "⚪ BELUM ADA TRANSAKSI"
+		report.SummaryNarration = "Kebun ini belum memiliki catatan transaksi panen atau operasional. Silakan catat transaksi pertama untuk mulai melihat analisis performa."
+	} else if report.TargetModal > 0 && report.NetProfit >= report.TargetModal {
+		report.HealthEmoji = "🎉"
+		report.HealthStatus = "🎉 SUDAH BALIK MODAL PENUH (BEP TERCAPAI!)"
+		report.SummaryNarration = fmt.Sprintf("Luar biasa! Dari %d kali panen (total %s Kg sawit), kebun ini sudah menghasilkan keuntungan bersih Rp%s. Seluruh modal awal Rp%s sudah kembali 100%% penuh dan kebun sekarang sudah murni mencetak keuntungan!",
+			report.HarvestCount, formatRupiah(report.TotalWeight), formatRupiah(report.NetProfit), formatRupiah(report.TargetModal))
+	} else if report.NetProfit > 0 {
+		report.HealthEmoji = "🟢"
+		report.HealthStatus = "🟢 KEBUN SEHAT & UNTUNG BERSIH"
+		bepNote := ""
+		if report.TargetModal > 0 {
+			bepNote = fmt.Sprintf(" Dari modal awal Rp%s, sudah kembali %.1f%% (sisa Rp%s lagi). %s.",
+				formatRupiah(report.TargetModal), report.ROITracking, formatRupiah(report.RemainingCapital), report.BEPProjection)
+		}
+		report.SummaryNarration = fmt.Sprintf("Kebun dalam kondisi sehat dan menghasilkan! Dari %d kali panen (total %s Kg sawit), sudah terkumpul keuntungan bersih Rp%s (rata-rata untung Rp%s/Kg sawit).%s",
+			report.HarvestCount, formatRupiah(report.TotalWeight), formatRupiah(report.NetProfit), formatRupiah(report.ProfitPerKg), bepNote)
+	} else {
+		report.HealthEmoji = "🔴"
+		report.HealthStatus = "🔴 PERLU PERHATIAN (DEFISIT BIAYA)"
+		report.SummaryNarration = fmt.Sprintf("Perhatian: Total pengeluaran kebun (Rp%s) saat ini masih lebih besar dari hasil penjualan sawit (Rp%s). Kebun masih defisit Rp%s. Diperlukan panen berikutnya untuk mulai menutup biaya operasional.",
+			formatRupiah(report.OperationalCost), formatRupiah(report.GrossIncome), formatRupiah(-report.NetProfit))
 	}
 
 	return report, nil
