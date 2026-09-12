@@ -618,7 +618,8 @@ func TestGetSiteReport_ComprehensiveAndBabyLanguage(t *testing.T) {
 	if report.ProfitPerKg != expectedNet/5000 {
 		t.Errorf("expected ProfitPerKg %d, got %d", expectedNet/5000, report.ProfitPerKg)
 	}
-	expectedTarget := int64(100000000 + 10000000) // 110.000.000
+	// Baris INVESTASI di X_LOG hanya audit trail: modal murni dari Sites col E.
+	expectedTarget := int64(100000000) // 100.000.000
 	if report.TargetModal != expectedTarget {
 		t.Errorf("expected TargetModal %d, got %d", expectedTarget, report.TargetModal)
 	}
@@ -722,4 +723,84 @@ func TestGetSiteReport_Defisit(t *testing.T) {
 	}
 }
 
+func TestGetSiteReport_BEPTrailingWindow(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_004", "Kebun Terkini", "Kalimantan", "ACTIVE", "100000000"},
+			},
+			"X_LOG!A2:Q": {
+				// Panen lama (di luar window 90 hari): profit 5.000.000
+				{"LOG_01", "2026-01-01T10:00:00Z", "2026-01-01", "PANEN", "SITE_004", "Kebun Terkini", "CAT_PANEN", "Panen", "", "", "6000000", "5000000", "1000", "6000", "800000", "200000", "Panen Januari"},
+				// Panen baru (dalam window): profit 5.000.000
+				{"LOG_02", "2026-08-20T10:00:00Z", "2026-08-20", "PANEN", "SITE_004", "Kebun Terkini", "CAT_PANEN", "Panen", "", "", "6000000", "5000000", "1000", "6000", "800000", "200000", "Panen Agustus"},
+			},
+		},
+	}
 
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_004")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if report.NetProfit != 10000000 {
+		t.Errorf("expected NetProfit 10000000, got %d", report.NetProfit)
+	}
+	// Window 90 hari hanya memuat panen Agustus (profit 5jt / 90 hari),
+	// bukan seluruh rentang Jan-Agu (10jt / 231 hari).
+	if !strings.Contains(report.BEPProjection, "4.4 tahun") {
+		t.Errorf("expected BEP projection based on trailing window (~4.4 tahun), got %s", report.BEPProjection)
+	}
+}
+
+func TestGetSiteReport_BEPWindowFallback(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_005", "Kebun Fallback", "Sumatera", "ACTIVE", "6000000"},
+			},
+			"X_LOG!A2:Q": {
+				// Satu-satunya panen di luar window 90 hari → fallback per periode penuh
+				{"LOG_01", "2026-01-01T10:00:00Z", "2026-01-01", "PANEN", "SITE_005", "Kebun Fallback", "CAT_PANEN", "Panen", "", "", "4000000", "3000000", "1000", "3000", "700000", "300000", "Panen Awal"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_005")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if report.NetProfit != 3000000 {
+		t.Errorf("expected NetProfit 3000000, got %d", report.NetProfit)
+	}
+	// Remaining 3.000.000 / (3.000.000 per 30 hari) -> ~1,0 bulan
+	if !strings.Contains(report.BEPProjection, "1.0 bulan") {
+		t.Errorf("expected BEP fallback projection ~1.0 bulan, got %s", report.BEPProjection)
+	}
+}
+
+func TestGetSiteReport_BEPCapNinetyNineYears(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:E": {
+				{"SITE_006", "Kebun Sangat Besar", "Kalimantan", "ACTIVE", "100000000000"},
+			},
+			"X_LOG!A2:Q": {
+				{"LOG_01", "2026-08-20T10:00:00Z", "2026-08-20", "PANEN", "SITE_006", "Kebun Sangat Besar", "CAT_PANEN", "Panen", "", "", "1000000", "0", "1000", "1000", "0", "0", "Panen Kecil"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	report, err := mds.GetSiteReport(context.Background(), "SITE_006")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(report.BEPProjection, "> 99 tahun") {
+		t.Errorf("expected BEP projection capped at > 99 tahun, got %s", report.BEPProjection)
+	}
+}

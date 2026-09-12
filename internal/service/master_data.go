@@ -34,15 +34,15 @@ func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, e
 		if len(row) < 2 { // Min id and name
 			continue
 		}
-		
+
 		id := fmt.Sprintf("%v", row[0])
 		name := fmt.Sprintf("%v", row[1])
-		
+
 		status := "INACTIVE"
 		if len(row) >= 4 {
 			status = fmt.Sprintf("%v", row[3])
 		}
-		
+
 		if status != "ACTIVE" {
 			continue
 		}
@@ -58,9 +58,14 @@ func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, e
 		log.Printf("[MASTER] Loaded active site: %s (%s), Target: %d", name, id, targetModal)
 
 		sites = append(sites, model.Site{
-			ID:          id,
-			Name:        name,
-			Location:    func() string { if len(row) >= 3 { return fmt.Sprintf("%v", row[2]) }; return "" }(),
+			ID:   id,
+			Name: name,
+			Location: func() string {
+				if len(row) >= 3 {
+					return fmt.Sprintf("%v", row[2])
+				}
+				return ""
+			}(),
 			Status:      status,
 			TargetModal: targetModal,
 		})
@@ -209,6 +214,7 @@ func (s *MasterDataService) GetCrewBalance(ctx context.Context, crewID string) (
 	}
 	return balance, nil
 }
+
 // GetSiteReport aggregates transaction data for a specific site from X_LOG.
 func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (model.SiteReport, error) {
 	// 1. Get Target Modal from Sites master
@@ -235,6 +241,13 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 
 	var firstDate, lastDate time.Time
 
+	// Profit/contribution entries per row, used for BEP trailing-window projection.
+	type profitEntry struct {
+		date   time.Time
+		profit float64
+	}
+	var profitEntries []profitEntry
+
 	for _, row := range rows {
 		if len(row) < 11 {
 			continue
@@ -244,10 +257,11 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 			continue
 		}
 
-		// Track date range for BEP projection
+		// Track date range & per-row profit for BEP projection
+		var eventDate time.Time
 		if len(row) >= 3 {
 			eventDateRaw := fmt.Sprintf("%v", row[2])
-			eventDate, _ := time.Parse("2006-01-02", eventDateRaw)
+			eventDate, _ = time.Parse("2006-01-02", eventDateRaw)
 			if !eventDate.IsZero() {
 				if firstDate.IsZero() || eventDate.Before(firstDate) {
 					firstDate = eventDate
@@ -274,13 +288,30 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 				report.TotalUpah += labor
 				report.TotalTransport += transport
 				report.OperationalCost += (labor + transport)
+				if !eventDate.IsZero() {
+					profitEntries = append(profitEntries, profitEntry{
+						date:   eventDate,
+						profit: float64(amountRaw - labor - transport),
+					})
+				}
 			} else {
 				report.GrossIncome += amountRaw
+				if !eventDate.IsZero() {
+					profitEntries = append(profitEntries, profitEntry{
+						date:   eventDate,
+						profit: float64(amountRaw),
+					})
+				}
 			}
-
 		case "OPERASIONAL":
 			report.TotalOperasional += amountRaw
 			report.OperationalCost += amountRaw
+			if !eventDate.IsZero() {
+				profitEntries = append(profitEntries, profitEntry{
+					date:   eventDate,
+					profit: -float64(amountRaw),
+				})
+			}
 
 			// Breakdown kategori operasional
 			catID := ""
@@ -318,8 +349,8 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 				report.TotalBayar += amountRaw
 			}
 
-		case "INVESTASI":
-			report.TargetModal += amountRaw
+			// INVESTASI rows are audit-trail only: TargetModal comes from the
+			// Sites sheet (col E) and must not be double-counted from X_LOG.
 		}
 	}
 
@@ -354,13 +385,37 @@ func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (m
 		if days < 30 {
 			days = 30 // Minimum 1 bulan untuk perataan
 		}
-		avgDailyProfit := float64(report.NetProfit) / days
+
+		// Trailing window: gunakan performa profit 90 hari terakhir agar
+		// estimasi mencerminkan kondisi kebun saat ini, bukan seluruh rentang.
+		windowStart := lastDate.AddDate(0, 0, -90)
+		if windowStart.Before(firstDate) {
+			windowStart = firstDate
+		}
+		windowDays := lastDate.Sub(windowStart).Hours() / 24
+		var windowProfit float64
+		for _, pe := range profitEntries {
+			if !pe.date.Before(windowStart) {
+				windowProfit += pe.profit
+			}
+		}
+
+		var avgDailyProfit float64
+		if windowDays > 0 && windowProfit > 0 {
+			avgDailyProfit = windowProfit / windowDays
+		} else {
+			// Fallback: rata-rata periode penuh jika window belum punya data profit.
+			avgDailyProfit = float64(report.NetProfit) / days
+		}
 		avgMonthlyProfit := avgDailyProfit * 30.44
 
 		if report.RemainingCapital > 0 && avgMonthlyProfit > 0 {
 			monthsRemaining := float64(report.RemainingCapital) / avgMonthlyProfit
-			if monthsRemaining > 12 {
-				report.BEPProjection = fmt.Sprintf("Estimasi %.1f tahun lagi", monthsRemaining/12)
+			yearsRemaining := monthsRemaining / 12
+			if yearsRemaining > 99 {
+				report.BEPProjection = "Estimasi > 99 tahun lagi"
+			} else if monthsRemaining > 12 {
+				report.BEPProjection = fmt.Sprintf("Estimasi %.1f tahun lagi", yearsRemaining)
 			} else {
 				report.BEPProjection = fmt.Sprintf("Estimasi %.1f bulan lagi", monthsRemaining)
 			}
@@ -602,7 +657,6 @@ func (s *MasterDataService) GetListSemprot(ctx context.Context, siteID string) (
 	return results, nil
 }
 
-
 // GetCrewDebtSummaries calculates total pinjam, total bayar, outstanding debt, and latest dates for all active crew members.
 func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID string) ([]model.CrewDebtSummary, error) {
 	crewList, err := s.GetActiveCrew(ctx)
@@ -739,5 +793,3 @@ func (s *MasterDataService) GetListHutang(ctx context.Context, siteID string) ([
 	}
 	return results, nil
 }
-
-
