@@ -303,6 +303,41 @@ func TestGetListPruning_SheetError(t *testing.T) {
 	}
 }
 
+func TestGetMaintenanceCostSummary_ReturnsBreakdown(t *testing.T) {
+	mock := &mockSheetsClient{
+		readData: [][]interface{}{
+			{"log-1", "2026-03-15", "2026-03-15", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_PUPUK", "Pupuk", "CREW_001", "Jono", "300000", "300000"},
+			{"log-2", "2026-03-16", "2026-03-16", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_SEMPROT", "Semprot", "CREW_001", "Jono", "200000", "200000"},
+			{"log-3", "2026-03-17", "2026-03-17", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_PRUNING", "Pruning", "CREW_001", "Jono", "250000", "250000"},
+			{"log-4", "2026-03-18", "2026-03-18", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_THR", "THR", "CREW_001", "Jono", "500000", "500000"},
+			{"log-5", "2026-03-19", "2026-03-19", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_LAIN", "Operasional", "CREW_001", "Jono", "100000", "100000"},
+			{"log-6", "2026-03-20", "2026-03-20", "OPERASIONAL", "SITE_002", "Kebun Plasma", "CAT_PUPUK", "Pupuk", "CREW_002", "Slamet", "900000", "900000"},
+		},
+	}
+
+	svc := service.NewMasterDataService(mock)
+	summary, err := svc.GetMaintenanceCostSummary(context.Background(), "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if summary.TotalPupuk != 300000 || summary.TotalSemprot != 200000 || summary.TotalPruning != 250000 || summary.TotalTHR != 500000 || summary.TotalLainnya != 100000 {
+		t.Errorf("unexpected maintenance breakdown: %+v", summary)
+	}
+	if summary.TotalBiaya != 1350000 {
+		t.Errorf("expected total cost 1350000, got %d", summary.TotalBiaya)
+	}
+}
+
+func TestGetMaintenanceCostSummary_SheetError(t *testing.T) {
+	mock := &mockSheetsClient{readErr: errors.New("sheets error")}
+	svc := service.NewMasterDataService(mock)
+	_, err := svc.GetMaintenanceCostSummary(context.Background(), "SITE_001")
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
 func TestGetListPanen_ParsesUnitPriceAndFallback(t *testing.T) {
 	thisYearDate := fmt.Sprintf("%d-05-10", time.Now().Year())
 	lastYearDate := fmt.Sprintf("%d-05-10", time.Now().Year()-1)

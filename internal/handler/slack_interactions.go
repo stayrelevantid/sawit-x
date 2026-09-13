@@ -173,6 +173,9 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 		case "view_list_pruning":
 			h.handleListPruning(w, r, payload)
 			return
+		case "view_maintenance_cost":
+			h.handleMaintenanceCost(w, r, payload)
+			return
 		}
 	}
 	w.WriteHeader(http.StatusOK)
@@ -364,6 +367,38 @@ func (h *SlackInteractionsHandler) handleListPruning(w http.ResponseWriter, r *h
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
 		log.Printf("[LIST_PRUNING] Error posting message to channel %s: %v", channelToSend, err)
+		if state.ChannelID != "" {
+			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleMaintenanceCost(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var state model.TransactionState
+	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+
+	summary, err := h.masterDataService.GetMaintenanceCostSummary(ctx, state.SiteID)
+	if err != nil {
+		log.Printf("[MAINTENANCE_COST] Error getting maintenance cost for site %s: %v", state.SiteID, err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	modal := h.uiService.BuildMaintenanceCostModal(state.SiteName, summary)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MAINTENANCE_COST] Error updating view: %v", err)
+	}
+
+	channelToSend := "#sawit-x-apps"
+	msg := h.uiService.BuildMaintenanceCostMessage(state.SiteName, summary)
+	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	if err != nil {
+		log.Printf("[MAINTENANCE_COST] Error posting message to channel %s: %v", channelToSend, err)
 		if state.ChannelID != "" {
 			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 		}

@@ -116,6 +116,7 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
 					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
 					slack.NewButtonBlockElement("view_list_pruning", "PRUNING_LIST", txt("✂️ List Pruning")),
+					slack.NewButtonBlockElement("view_maintenance_cost", "MAINTENANCE_COST", txt("💰 Rekap Biaya Perawatan")),
 				),
 			},
 		},
@@ -1114,6 +1115,49 @@ func (s *UIService) BuildListPruningMessage(siteName string, pruningList []model
 				BlockSet: blocks,
 			},
 		},
+	}
+}
+
+func buildMaintenanceCostBlocks(siteName string, summary model.MaintenanceCostSummary, message bool) []slack.Block {
+	blocks := make([]slack.Block, 0, 7)
+	if message {
+		blocks = append(blocks, slack.NewSectionBlock(md("🌿 *REKAP BIAYA PERAWATAN KEBUN*"), nil, nil))
+	} else {
+		blocks = append(blocks, slack.NewHeaderBlock(txt("🌿 Rekap Biaya Perawatan")))
+	}
+	blocks = append(blocks,
+		slack.NewContextBlock("", md(fmt.Sprintf("_Kebun: %s_", siteName))),
+		slack.NewDividerBlock(),
+		slack.NewSectionBlock(md(fmt.Sprintf(
+			"🧪 *Pupuk:* Rp%s\n"+
+				"🌧️ *Penyemprotan:* Rp%s\n"+
+				"✂️ *Pruning:* Rp%s\n"+
+				"🎁 *THR:* Rp%s\n"+
+				"🛠️ *Biaya Lainnya:* Rp%s\n\n"+
+				"💰 *Total Biaya Perawatan:* Rp%s",
+			formatRupiah(summary.TotalPupuk),
+			formatRupiah(summary.TotalSemprot),
+			formatRupiah(summary.TotalPruning),
+			formatRupiah(summary.TotalTHR),
+			formatRupiah(summary.TotalLainnya),
+			formatRupiah(summary.TotalBiaya),
+		)), nil, nil),
+	)
+	return blocks
+}
+
+func (s *UIService) BuildMaintenanceCostModal(siteName string, summary model.MaintenanceCostSummary) slack.ModalViewRequest {
+	return slack.ModalViewRequest{
+		Type:   slack.VTModal,
+		Title:  txt("🌿 Rekap Perawatan"),
+		Close:  txt("Tutup"),
+		Blocks: slack.Blocks{BlockSet: buildMaintenanceCostBlocks(siteName, summary, false)},
+	}
+}
+
+func (s *UIService) BuildMaintenanceCostMessage(siteName string, summary model.MaintenanceCostSummary) slack.Message {
+	return slack.Message{
+		Msg: slack.Msg{Blocks: slack.Blocks{BlockSet: buildMaintenanceCostBlocks(siteName, summary, true)}},
 	}
 }
 

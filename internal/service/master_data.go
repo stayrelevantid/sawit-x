@@ -702,6 +702,56 @@ func (s *MasterDataService) GetListPruning(ctx context.Context, siteID string) (
 	return results, nil
 }
 
+// GetMaintenanceCostSummary calculates operational costs by maintenance category for a site.
+func (s *MasterDataService) GetMaintenanceCostSummary(ctx context.Context, siteID string) (model.MaintenanceCostSummary, error) {
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return model.MaintenanceCostSummary{}, err
+	}
+
+	var summary model.MaintenanceCostSummary
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+		if fmt.Sprintf("%v", row[4]) != siteID || fmt.Sprintf("%v", row[3]) != "OPERASIONAL" {
+			continue
+		}
+
+		amount, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+		catID := strings.ToUpper(fmt.Sprintf("%v", row[6]))
+		catName := ""
+		if len(row) > 7 {
+			catName = strings.ToUpper(fmt.Sprintf("%v", row[7]))
+		}
+		notes := ""
+		if len(row) > 16 {
+			notes = strings.ToUpper(fmt.Sprintf("%v", row[16]))
+		}
+
+		isPupuk := catID == "CAT_PUPUK" || strings.Contains(catID, "PUPUK") || strings.Contains(catName, "PUPUK") || strings.Contains(notes, "PUPUK")
+		isSemprot := catID == "CAT_SEMPROT" || strings.Contains(catID, "SEMPROT") || strings.Contains(catName, "SEMPROT") || strings.Contains(notes, "SEMPROT") || strings.Contains(notes, "HERBISIDA") || strings.Contains(notes, "RACUN")
+		isPruning := catID == "CAT_PRUNING" || strings.Contains(catID, "PRUNING") || strings.Contains(catName, "PRUNING") || strings.Contains(notes, "PRUNING")
+		isTHR := catID == "CAT_THR" || strings.Contains(catID, "THR") || strings.Contains(catName, "THR") || strings.Contains(notes, "THR")
+
+		switch {
+		case isPupuk:
+			summary.TotalPupuk += amount
+		case isSemprot:
+			summary.TotalSemprot += amount
+		case isPruning:
+			summary.TotalPruning += amount
+		case isTHR:
+			summary.TotalTHR += amount
+		default:
+			summary.TotalLainnya += amount
+		}
+	}
+
+	summary.TotalBiaya = summary.TotalPupuk + summary.TotalSemprot + summary.TotalPruning + summary.TotalTHR + summary.TotalLainnya
+	return summary, nil
+}
+
 // GetCrewDebtSummaries calculates total pinjam, total bayar, outstanding debt, and latest dates for all active crew members.
 func (s *MasterDataService) GetCrewDebtSummaries(ctx context.Context, siteID string) ([]model.CrewDebtSummary, error) {
 	crewList, err := s.GetActiveCrew(ctx)

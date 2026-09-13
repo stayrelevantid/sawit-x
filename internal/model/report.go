@@ -38,6 +38,15 @@ type SiteReport struct {
 	BEPProjection   string `json:"bep_projection"`   // e.g. "Estimasi 18 bulan lagi"
 }
 
+type MaintenanceCostSummary struct {
+	TotalPupuk   int64 `json:"total_pupuk"`
+	TotalSemprot int64 `json:"total_semprot"`
+	TotalPruning int64 `json:"total_pruning"`
+	TotalTHR     int64 `json:"total_thr"`
+	TotalLainnya int64 `json:"total_lainnya"`
+	TotalBiaya   int64 `json:"total_biaya"`
+}
+
 type PupukLogEntry struct {
 	EventDate time.Time `json:"event_date"`
 	CrewName  string    `json:"crew_name"`
