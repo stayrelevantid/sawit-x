@@ -91,12 +91,13 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 				slack.NewDividerBlock(),
 
 				// Group 2: Laporan & Keuangan
-				slack.NewSectionBlock(md("*📊 Rekap & Keuangan*\n_Ringkasan performa laba/rugi kebun dan rekap saldo kasbon pegawai._"), nil, nil),
+				slack.NewSectionBlock(md("*📊 Rekap & Keuangan*\n_Ringkasan performa laba/rugi kebun, biaya perawatan, dan rekap saldo kasbon pegawai._"), nil, nil),
 				slack.NewActionBlock(
 					"group_keuangan_block",
 					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap Kebun")),
 					slack.NewButtonBlockElement("view_rekap_hutang_pegawai", "CREW_DEBT_LIST", txt("📋 Rekap Hutang Pegawai")),
 					slack.NewButtonBlockElement("view_list_hutang_lengkap", "HUTANG_LOG_LIST", txt("📜 List Lengkap Kasbon")),
+					slack.NewButtonBlockElement("view_maintenance_cost", "MAINTENANCE_COST", txt("💰 Rekap Biaya Perawatan")),
 				),
 				slack.NewDividerBlock(),
 
@@ -116,7 +117,6 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
 					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
 					slack.NewButtonBlockElement("view_list_pruning", "PRUNING_LIST", txt("✂️ List Pruning")),
-					slack.NewButtonBlockElement("view_maintenance_cost", "MAINTENANCE_COST", txt("💰 Rekap Biaya Perawatan")),
 				),
 			},
 		},
