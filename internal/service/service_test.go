@@ -873,3 +873,222 @@ func TestGetSiteReport_BEPCapNinetyNineYears(t *testing.T) {
 		t.Errorf("expected BEP projection capped at > 99 tahun, got %s", report.BEPProjection)
 	}
 }
+
+// ---- Duplicate Transaction Detection Tests ----
+
+func TestCheckDuplicateTransaction_Panen(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"X_LOG!A2:Q": {
+				{"LOG_01", "2026-10-01T08:00:00Z", "2026-10-01", "PANEN", "SITE_001", "Kebun Induk", "PANEN", "Panen TBS", "CRW_01", "Budi", "2500000", "2300000", "1000", "2500", "100000", "100000", "Panen pagi"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	ctx := context.Background()
+	eventDate, _ := time.Parse("2006-01-02", "2026-10-01")
+
+	// 1. Identical panen -> duplicate
+	dupEntry := model.LogEntry{
+		SiteID:     "SITE_001",
+		EventDate:  eventDate,
+		ModuleType: model.ModulePanen,
+		AmountRaw:  2500000,
+		Weight:     1000,
+		Notes:      "Input ulang nota",
+	}
+	isDup, err := mds.CheckDuplicateTransaction(ctx, dupEntry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDup {
+		t.Errorf("expected duplicate to be true for identical panen")
+	}
+
+	// 2. Different weight -> not duplicate
+	diffWeight := dupEntry
+	diffWeight.Weight = 1200
+	diffWeight.AmountRaw = 3000000
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffWeight)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different weight/amount")
+	}
+
+	// 3. Different date -> not duplicate
+	diffDate := dupEntry
+	diffDate.EventDate, _ = time.Parse("2006-01-02", "2026-10-02")
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffDate)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different date")
+	}
+
+	// 4. Different site -> not duplicate
+	diffSite := dupEntry
+	diffSite.SiteID = "SITE_002"
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffSite)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different site")
+	}
+}
+
+func TestCheckDuplicateTransaction_Operasional(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"X_LOG!A2:Q": {
+				{"LOG_02", "2026-10-01T09:00:00Z", "2026-10-01", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_PUPUK", "Pupuk", "CRW_01", "Budi", "500000", "500000", "0", "0", "0", "0", "Beli NPK"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	ctx := context.Background()
+	eventDate, _ := time.Parse("2006-01-02", "2026-10-01")
+
+	// 1. Identical expense -> duplicate
+	dupEntry := model.LogEntry{
+		SiteID:     "SITE_001",
+		EventDate:  eventDate,
+		ModuleType: model.ModuleOperasional,
+		CategoryID: "CAT_PUPUK",
+		AmountRaw:  500000,
+	}
+	isDup, err := mds.CheckDuplicateTransaction(ctx, dupEntry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDup {
+		t.Errorf("expected duplicate to be true for identical operasional")
+	}
+
+	// 2. Different category -> not duplicate
+	diffCat := dupEntry
+	diffCat.CategoryID = "CAT_BBM"
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffCat)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different category")
+	}
+
+	// 3. Different amount -> not duplicate
+	diffAmount := dupEntry
+	diffAmount.AmountRaw = 750000
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffAmount)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different amount")
+	}
+}
+
+func TestCheckDuplicateTransaction_Piutang(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"X_LOG!A2:Q": {
+				{"LOG_03", "2026-10-01T10:00:00Z", "2026-10-01", "PIUTANG", "SITE_001", "Kebun Induk", "PINJAM", "Pinjam", "CRW_01", "Budi", "200000", "200000", "0", "0", "0", "0", "Kasbon"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	ctx := context.Background()
+	eventDate, _ := time.Parse("2006-01-02", "2026-10-01")
+
+	// 1. Same crew, same action, same amount -> duplicate
+	dupEntry := model.LogEntry{
+		SiteID:     "SITE_001",
+		EventDate:  eventDate,
+		ModuleType: model.ModulePiutang,
+		CategoryID: "PINJAM",
+		CrewID:     "CRW_01",
+		AmountRaw:  200000,
+	}
+	isDup, err := mds.CheckDuplicateTransaction(ctx, dupEntry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDup {
+		t.Errorf("expected duplicate to be true for identical piutang")
+	}
+
+	// 2. Different crew -> not duplicate
+	diffCrew := dupEntry
+	diffCrew.CrewID = "CRW_02"
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffCrew)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different crew")
+	}
+
+	// 3. Different action (BAYAR vs PINJAM) -> not duplicate
+	diffAction := dupEntry
+	diffAction.CategoryID = "BAYAR"
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffAction)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different action")
+	}
+}
+
+func TestCheckDuplicateTransaction_Investasi(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"X_LOG!A2:Q": {
+				{"LOG_04", "2026-10-01T11:00:00Z", "2026-10-01", "INVESTASI", "SITE_001", "Kebun Induk", "UPDATE_CAPITAL", "Update Modal Lahan", "", "", "100000000", "100000000", "0", "0", "0", "0", "Modal awal"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	ctx := context.Background()
+	eventDate, _ := time.Parse("2006-01-02", "2026-10-01")
+
+	dupEntry := model.LogEntry{
+		SiteID:     "SITE_001",
+		EventDate:  eventDate,
+		ModuleType: model.ModuleInvestasi,
+		AmountRaw:  100000000,
+	}
+	isDup, err := mds.CheckDuplicateTransaction(ctx, dupEntry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDup {
+		t.Errorf("expected duplicate to be true for identical investasi")
+	}
+
+	diffAmount := dupEntry
+	diffAmount.AmountRaw = 150000000
+	isDup, _ = mds.CheckDuplicateTransaction(ctx, diffAmount)
+	if isDup {
+		t.Errorf("expected duplicate to be false for different investasi amount")
+	}
+}
+
+func TestCheckDuplicateTransaction_BypassWithNotes(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"X_LOG!A2:Q": {
+				{"LOG_05", "2026-10-01T12:00:00Z", "2026-10-01", "OPERASIONAL", "SITE_001", "Kebun Induk", "CAT_SOLAR", "BBM", "CRW_01", "Budi", "100000", "100000", "0", "0", "0", "0", "Beli solar pagi"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	ctx := context.Background()
+	eventDate, _ := time.Parse("2006-01-02", "2026-10-01")
+
+	// Duplicate attributes but notes has "konfirmasi" -> bypass duplicate check
+	bypassEntry := model.LogEntry{
+		SiteID:     "SITE_001",
+		EventDate:  eventDate,
+		ModuleType: model.ModuleOperasional,
+		CategoryID: "CAT_SOLAR",
+		AmountRaw:  100000,
+		Notes:      "Beli solar sore (konfirmasi transaksi terpisah)",
+	}
+
+	isDup, err := mds.CheckDuplicateTransaction(ctx, bypassEntry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isDup {
+		t.Errorf("expected duplicate check to be bypassed when notes contains 'konfirmasi'")
+	}
+}
+

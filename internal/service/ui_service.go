@@ -633,8 +633,8 @@ func (s *UIService) BuildReportMessage(siteName string, report model.SiteReport)
 	}
 }
 
-// formatRupiah formats an int64 into a human-readable Rupiah string with dots.
-func formatRupiah(amount int64) string {
+// FormatRupiah formats an int64 into a human-readable Rupiah string with dots.
+func FormatRupiah(amount int64) string {
 	isNeg := false
 	if amount < 0 {
 		isNeg = true
@@ -650,9 +650,13 @@ func formatRupiah(amount int64) string {
 		result += string(c)
 	}
 	if isNeg {
-		result = "-" + result
+		return "-" + result
 	}
 	return result
+}
+
+func formatRupiah(amount int64) string {
+	return FormatRupiah(amount)
 }
 
 // BuildListPanenModal builds a modal to show harvest data for a specific year.

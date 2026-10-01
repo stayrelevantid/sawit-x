@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -92,7 +93,11 @@ func (h *SlackInteractionsHandler) handleSiteSelection(w http.ResponseWriter, r 
 	}
 
 	var prevState model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &prevState)
+	if payload.View.PrivateMetadata != "" {
+		if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &prevState); err != nil {
+			log.Printf("[SITE_SELECT] Warning unmarshalling private metadata: %v", err)
+		}
+	}
 
 	state := model.TransactionState{
 		SiteID:    siteID,
@@ -110,7 +115,11 @@ func (h *SlackInteractionsHandler) handleModuleSelection(w http.ResponseWriter, 
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[MODULE_SELECT] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "module_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	moduleType := payload.View.State.Values["module_block"]["module_type"].SelectedOption.Value
 	state.ModuleType = moduleType
@@ -183,7 +192,11 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 
 func (h *SlackInteractionsHandler) handleModePencatatan(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[MODE] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	modal := h.uiService.BuildModuleSelectionModal(state)
 
@@ -198,7 +211,11 @@ func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[REPORT] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	report, err := h.masterDataService.GetSiteReport(ctx, state.SiteID)
 	if err != nil {
@@ -230,8 +247,12 @@ func (h *SlackInteractionsHandler) handleReport(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// Sync to X_REKAP
-	go h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+	// Sync to X_REKAP with timeout
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
+	}()
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -240,7 +261,11 @@ func (h *SlackInteractionsHandler) handleListPanen(w http.ResponseWriter, r *htt
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[LIST_PANEN] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	panenList, err := h.masterDataService.GetListPanen(ctx, state.SiteID, yearOffset)
 	if err != nil {
@@ -257,20 +282,16 @@ func (h *SlackInteractionsHandler) handleListPanen(w http.ResponseWriter, r *htt
 		log.Printf("[LIST_PANEN] Error updating view: %v", err)
 	}
 
-	// Also send as a message to the sawit-x-apps channel (or to the contextual channel)
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	if state.ChannelID != "" && !strings.HasPrefix(state.ChannelID, "D") {
-		// If invoked from a specific public/private channel, reply there, but explicitly fallback/override as requested.
-		// Since user explicitly asked for "channel sawit-x-apps", we'll broadcast it there to be safe.
-		// We can also post to state.ChannelID if they differ. To be simple, we'll force "#sawit-x-apps".
-		channelToSend = "#sawit-x-apps"
+		channelToSend = getReportChannel()
 	}
 
 	msg := h.uiService.BuildListPanenMessage(state.SiteName, targetYear, panenList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
 		log.Printf("[LIST_PANEN] Error posting message to channel %s: %v", channelToSend, err)
-		// Fallback to contextual channel if #sawit-x-apps fails (maybe bot is not in it or string is invalid)
+		// Fallback to contextual channel if getReportChannel() fails
 		if state.ChannelID != "" {
 			_, _, _ = h.slackClient.PostMessage(state.ChannelID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 		}
@@ -283,7 +304,11 @@ func (h *SlackInteractionsHandler) handleListPupuk(w http.ResponseWriter, r *htt
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[LIST_PUPUK] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	pupukList, err := h.masterDataService.GetListPupuk(ctx, state.SiteID)
 	if err != nil {
@@ -298,7 +323,7 @@ func (h *SlackInteractionsHandler) handleListPupuk(w http.ResponseWriter, r *htt
 		log.Printf("[LIST_PUPUK] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildListPupukMessage(state.SiteName, pupukList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -315,7 +340,11 @@ func (h *SlackInteractionsHandler) handleListSemprot(w http.ResponseWriter, r *h
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[LIST_SEMPROT] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	semprotList, err := h.masterDataService.GetListSemprot(ctx, state.SiteID)
 	if err != nil {
@@ -330,7 +359,7 @@ func (h *SlackInteractionsHandler) handleListSemprot(w http.ResponseWriter, r *h
 		log.Printf("[LIST_SEMPROT] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildListSemprotMessage(state.SiteName, semprotList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -347,7 +376,11 @@ func (h *SlackInteractionsHandler) handleListPruning(w http.ResponseWriter, r *h
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[LIST_PRUNING] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	pruningList, err := h.masterDataService.GetListPruning(ctx, state.SiteID)
 	if err != nil {
@@ -362,7 +395,7 @@ func (h *SlackInteractionsHandler) handleListPruning(w http.ResponseWriter, r *h
 		log.Printf("[LIST_PRUNING] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildListPruningMessage(state.SiteName, pruningList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -379,7 +412,11 @@ func (h *SlackInteractionsHandler) handleMaintenanceCost(w http.ResponseWriter, 
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[MAINTENANCE_COST] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	summary, err := h.masterDataService.GetMaintenanceCostSummary(ctx, state.SiteID)
 	if err != nil {
@@ -394,7 +431,7 @@ func (h *SlackInteractionsHandler) handleMaintenanceCost(w http.ResponseWriter, 
 		log.Printf("[MAINTENANCE_COST] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildMaintenanceCostMessage(state.SiteName, summary)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -411,7 +448,11 @@ func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWrite
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[CREW_DEBT] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	summaries, err := h.masterDataService.GetCrewDebtSummaries(ctx, state.SiteID)
 	if err != nil {
@@ -427,7 +468,7 @@ func (h *SlackInteractionsHandler) handleRekapHutangPegawai(w http.ResponseWrite
 		log.Printf("[CREW_DEBT] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildCrewDebtMessage(state.SiteName, summaries)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -444,7 +485,11 @@ func (h *SlackInteractionsHandler) handleListHutangLengkap(w http.ResponseWriter
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[LIST_HUTANG] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	hutangList, err := h.masterDataService.GetListHutang(ctx, state.SiteID)
 	if err != nil {
@@ -460,7 +505,7 @@ func (h *SlackInteractionsHandler) handleListHutangLengkap(w http.ResponseWriter
 		log.Printf("[LIST_HUTANG] Error updating view: %v", err)
 	}
 
-	channelToSend := "#sawit-x-apps"
+	channelToSend := getReportChannel()
 	msg := h.uiService.BuildListHutangMessage(state.SiteName, hutangList)
 	_, _, err = h.slackClient.PostMessage(channelToSend, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
 	if err != nil {
@@ -479,7 +524,11 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 	values := payload.View.State.Values
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[PANEN] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "date_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	// Parse crew (multi-select)
 	crewElements := values["crew_block"]["crew_id"].SelectedOptions
@@ -539,14 +588,31 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 		ChannelID:     state.ChannelID,
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[PANEN] Error writing log: %v", err)
+	// Validate duplicate before writing
+	isDuplicate, err := h.masterDataService.CheckDuplicateTransaction(ctx, entry)
+	if err != nil {
+		log.Printf("[PANEN] Error checking duplicate: %v", err)
+	} else if isDuplicate {
+		respondWithErrors(w, "weight_block", fmt.Sprintf("⚠️ Transaksi panen serupa sudah tercatat pada tanggal %s (%d Kg). Jika memang terpisah, tambahkan kata 'konfirmasi' pada Catatan.", eventDate, weight))
+		return
 	}
 
-	// Sync to X_REKAP
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[PANEN] Error writing log: %v", err)
+		respondWithErrors(w, "weight_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
+		return
+	}
+
+	// Sync to X_REKAP with timeout
 	go func() {
-		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
-		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
+		if err != nil {
+			log.Printf("[PANEN] Failed to get site report for %s: %v", state.SiteID, err)
+			return
+		}
+		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
 	}()
 
 	respondClear(w)
@@ -559,7 +625,11 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 	values := payload.View.State.Values
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[OPERASIONAL] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "date_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	catOption := values["category_block"]["category_id"].SelectedOption
 	catID := catOption.Value
@@ -598,14 +668,31 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 		ChannelID:     state.ChannelID,
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[OPERASIONAL] Error writing log: %v", err)
+	// Validate duplicate before writing
+	isDuplicate, err := h.masterDataService.CheckDuplicateTransaction(ctx, entry)
+	if err != nil {
+		log.Printf("[OPERASIONAL] Error checking duplicate: %v", err)
+	} else if isDuplicate {
+		respondWithErrors(w, "amount_block", fmt.Sprintf("⚠️ Transaksi operasional serupa sudah tercatat pada tanggal %s dengan nominal Rp%s. Jika memang terpisah, tambahkan kata 'konfirmasi' pada Keterangan.", eventDate, service.FormatRupiah(amount)))
+		return
 	}
 
-	// Sync to X_REKAP
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[OPERASIONAL] Error writing log: %v", err)
+		respondWithErrors(w, "amount_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
+		return
+	}
+
+	// Sync to X_REKAP with timeout
 	go func() {
-		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
-		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
+		if err != nil {
+			log.Printf("[OPERASIONAL] Failed to get site report for %s: %v", state.SiteID, err)
+			return
+		}
+		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
 	}()
 
 	respondClear(w)
@@ -618,7 +705,11 @@ func (h *SlackInteractionsHandler) handlePiutangCrewSelect(w http.ResponseWriter
 	ctx := r.Context()
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[PIUTANG] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "crew_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	crewOption := payload.View.State.Values["crew_block"]["crew_id"].SelectedOption
 	crewID := crewOption.Value
@@ -643,7 +734,11 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 	values := payload.View.State.Values
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[PIUTANG] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "date_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	actionOption := values["action_block"]["piutang_action"].SelectedOption
 	actionID := actionOption.Value // PINJAM or BAYAR
@@ -687,14 +782,31 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 		ChannelID:     state.ChannelID,
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[PIUTANG] Error writing log: %v", err)
+	// Validate duplicate before writing
+	isDuplicate, err := h.masterDataService.CheckDuplicateTransaction(ctx, entry)
+	if err != nil {
+		log.Printf("[PIUTANG] Error checking duplicate: %v", err)
+	} else if isDuplicate {
+		respondWithErrors(w, "amount_block", fmt.Sprintf("⚠️ Transaksi piutang serupa untuk pegawai ini sudah tercatat pada tanggal %s dengan nominal Rp%s. Jika memang terpisah, tambahkan kata 'konfirmasi' pada Catatan.", eventDate, service.FormatRupiah(amount)))
+		return
 	}
 
-	// Sync to X_REKAP
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[PIUTANG] Error writing log: %v", err)
+		respondWithErrors(w, "amount_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
+		return
+	}
+
+	// Sync to X_REKAP with timeout
 	go func() {
-		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
-		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
+		if err != nil {
+			log.Printf("[PIUTANG] Failed to get site report for %s: %v", state.SiteID, err)
+			return
+		}
+		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
 	}()
 
 	respondClear(w)
@@ -755,6 +867,13 @@ func parseDate(d string) time.Time {
 	return t
 }
 
+func getReportChannel() string {
+	if ch := os.Getenv("REPORT_CHANNEL"); ch != "" {
+		return ch
+	}
+	return "#sawit-x-apps"
+}
+
 // unused — kept for backward compatibility reference
 func (h *SlackInteractionsHandler) sendErrorMessage(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -773,7 +892,11 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 	values := payload.View.State.Values
 
 	var state model.TransactionState
-	json.Unmarshal([]byte(payload.View.PrivateMetadata), &state)
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[INVESTASI] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "date_block", "Sesi modal tidak valid. Silakan ulangi dari menu /sawit.")
+		return
+	}
 
 	eventDate := values["date_block"]["event_date"].SelectedDate
 	amountStr := values["amount_block"]["amount_raw"].Value
@@ -785,14 +908,6 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 		return
 	}
 
-	// 1. Update direct site capital in MASTER sheet
-	if err := h.masterDataService.UpdateSiteTarget(ctx, state.SiteID, amount); err != nil {
-		log.Printf("[INVESTASI] Error updating site target: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	// 2. Log the change to X_LOG for audit trail
 	entry := model.LogEntry{
 		LogID:         uuid.New().String(),
 		Timestamp:     time.Now(),
@@ -810,16 +925,40 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 		ChannelID:     state.ChannelID,
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[INVESTASI] Error writing audit log: %v", err)
-		// We don't return error here because master sheet was already updated
+	// Validate duplicate before writing
+	isDuplicate, err := h.masterDataService.CheckDuplicateTransaction(ctx, entry)
+	if err != nil {
+		log.Printf("[INVESTASI] Error checking duplicate: %v", err)
+	} else if isDuplicate {
+		respondWithErrors(w, "amount_block", fmt.Sprintf("⚠️ Transaksi modal/investasi serupa sudah tercatat pada tanggal %s. Jika memang terpisah, tambahkan kata 'konfirmasi' pada Keterangan.", eventDate))
+		return
 	}
 
-	// Success Response & Sync
+	// 1. Update direct site capital in MASTER sheet
+	if err := h.masterDataService.UpdateSiteTarget(ctx, state.SiteID, amount); err != nil {
+		log.Printf("[INVESTASI] Error updating site target: %v", err)
+		respondWithErrors(w, "amount_block", "Gagal memperbarui target modal di sheet master: "+err.Error())
+		return
+	}
+
+	// 2. Log the change to X_LOG for audit trail
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[INVESTASI] Error writing audit log: %v", err)
+		respondWithErrors(w, "amount_block", "Gagal mencatat log investasi ke Google Sheets: "+err.Error())
+		return
+	}
+
+	// Success Response & Sync with timeout
 	go func() {
 		h.sendSuccessNotification(payload.User.ID, entry)
-		report, _ := h.masterDataService.GetSiteReport(context.Background(), state.SiteID)
-		h.syncRekap(context.Background(), state.SiteID, state.SiteName, report)
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
+		if err != nil {
+			log.Printf("[INVESTASI] Failed to get site report for %s: %v", state.SiteID, err)
+			return
+		}
+		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
 	}()
 
 	respondClear(w)

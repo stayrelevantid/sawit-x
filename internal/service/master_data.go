@@ -888,3 +888,77 @@ func (s *MasterDataService) GetListHutang(ctx context.Context, siteID string) ([
 	}
 	return results, nil
 }
+
+// CheckDuplicateTransaction checks whether a transaction with matching attributes already exists in X_LOG.
+// Criteria for duplicate:
+// - Same SiteID
+// - Same EventDate (YYYY-MM-DD)
+// - Same ModuleType
+// And depending on module:
+// - PANEN: same AmountRaw (gross income) and Weight
+// - OPERASIONAL: same CategoryID and AmountRaw
+// - PIUTANG: same CrewID, CategoryID (PINJAM/BAYAR), and AmountRaw
+// - INVESTASI: same AmountRaw
+//
+// Bypass mechanism: If the entry notes contain the keyword "konfirmasi" (case-insensitive),
+// the check is bypassed to allow intentional repeated entries.
+func (s *MasterDataService) CheckDuplicateTransaction(ctx context.Context, entry model.LogEntry) (bool, error) {
+	if strings.Contains(strings.ToLower(entry.Notes), "konfirmasi") {
+		return false, nil
+	}
+
+	rows, err := s.sheetsClient.ReadSpreadsheet("X_LOG!A2:Q")
+	if err != nil {
+		return false, err
+	}
+
+	targetDate := entry.EventDate.Format("2006-01-02")
+
+	for _, row := range rows {
+		if len(row) < 11 {
+			continue
+		}
+
+		rowDate := fmt.Sprintf("%v", row[2])
+		rowModule := fmt.Sprintf("%v", row[3])
+		rowSiteID := fmt.Sprintf("%v", row[4])
+
+		if rowSiteID != entry.SiteID || rowDate != targetDate || rowModule != string(entry.ModuleType) {
+			continue
+		}
+
+		rowAmountRaw, _ := strconv.ParseInt(fmt.Sprintf("%v", row[10]), 10, 64)
+
+		switch entry.ModuleType {
+		case model.ModulePanen:
+			var rowWeight int64
+			if len(row) > 12 {
+				rowWeight, _ = strconv.ParseInt(fmt.Sprintf("%v", row[12]), 10, 64)
+			}
+			if rowAmountRaw == entry.AmountRaw && (entry.Weight == 0 || rowWeight == entry.Weight) {
+				return true, nil
+			}
+
+		case model.ModuleOperasional:
+			rowCatID := fmt.Sprintf("%v", row[6])
+			if rowCatID == entry.CategoryID && rowAmountRaw == entry.AmountRaw {
+				return true, nil
+			}
+
+		case model.ModulePiutang:
+			rowCatID := fmt.Sprintf("%v", row[6])
+			rowCrewID := fmt.Sprintf("%v", row[8])
+			if rowCrewID == entry.CrewID && rowCatID == entry.CategoryID && rowAmountRaw == entry.AmountRaw {
+				return true, nil
+			}
+
+		case model.ModuleInvestasi:
+			if rowAmountRaw == entry.AmountRaw {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
