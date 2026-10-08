@@ -58,6 +58,12 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site, channelID string
 						siteOptions...,
 					),
 				),
+				slack.NewDividerBlock(),
+				slack.NewContextBlock("", md("Pengaturan sistem & data pendukung:")),
+				slack.NewActionBlock(
+					"master_menu_block",
+					slack.NewButtonBlockElement("btn_open_master_menu", "MASTER_MENU", txt("⚙️ Kelola Data Master")),
+				),
 			},
 		},
 	}
@@ -1283,3 +1289,290 @@ func (s *UIService) BuildListHutangMessage(siteName string, hutangList []model.H
 		},
 	}
 }
+
+// BuildMasterDataMenuModal builds the central hub for managing master data.
+func (s *UIService) BuildMasterDataMenuModal(channelID string) slack.ModalViewRequest {
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("⚙️ Data Master"),
+		Close:           txt("Tutup"),
+		CallbackID:      "master_data_menu_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("⚙️ Pengelolaan Data Master")),
+				slack.NewContextBlock("", md("Kelola data referensi kebun, tenaga kerja, dan kategori biaya:")),
+				slack.NewDividerBlock(),
+
+				slack.NewSectionBlock(
+					md("*🌳 Master Kebun (Lahan)*\n_Daftarkan kebun atau lahan baru ke dalam sistem._"),
+					nil,
+					slack.NewAccessory(slack.NewButtonBlockElement("btn_open_add_site", "ADD_SITE", txt("➕ Tambah Kebun"))),
+				),
+				slack.NewDividerBlock(),
+
+				slack.NewSectionBlock(
+					md("*👷 Master Pegawai / Crew*\n_Daftarkan tenaga kerja baru (Pemanen, Mandor, Supir, Perawatan)._"),
+					nil,
+					slack.NewAccessory(slack.NewButtonBlockElement("btn_open_add_crew", "ADD_CREW", txt("➕ Tambah Pegawai"))),
+				),
+				slack.NewDividerBlock(),
+
+				slack.NewSectionBlock(
+					md("*🏷️ Master Kategori Biaya*\n_Tambahkan pos jenis pengeluaran operasional baru._"),
+					nil,
+					slack.NewAccessory(slack.NewButtonBlockElement("btn_open_add_category", "ADD_CAT", txt("➕ Tambah Kategori"))),
+				),
+				slack.NewDividerBlock(),
+
+				slack.NewSectionBlock(
+					md("*📋 Ringkasan Data Master Aktif*\n_Lihat daftar kebun, pegawai, dan kategori yang sedang aktif._"),
+					nil,
+					slack.NewAccessory(slack.NewButtonBlockElement("btn_view_master_summary", "VIEW_MASTER", txt("👀 Lihat Semua"))),
+				),
+			},
+		},
+	}
+}
+
+// BuildAddSiteModal builds the modal to register a new plantation site.
+func (s *UIService) BuildAddSiteModal(channelID string) slack.ModalViewRequest {
+	targetModalInput := slack.NewPlainTextInputBlockElement(txt("Contoh: 150000000"), "target_modal")
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("🌳 Tambah Kebun"),
+		Close:           txt("Batal"),
+		Submit:          txt("Simpan Kebun"),
+		CallbackID:      "add_site_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("Registrasi Kebun Baru")),
+				slack.NewInputBlock(
+					"site_name_block",
+					txt("Nama Kebun"),
+					nil,
+					slack.NewPlainTextInputBlockElement(txt("Contoh: Kebun Plasma B"), "site_name"),
+				),
+				slack.NewInputBlock(
+					"site_location_block",
+					txt("Lokasi / Wilayah"),
+					nil,
+					slack.NewPlainTextInputBlockElement(txt("Contoh: Riau / Blok C"), "site_location"),
+				),
+				func() *slack.InputBlock {
+					b := slack.NewInputBlock(
+						"site_target_block",
+						txt("Target Modal Awal / Nilai Investasi (Rp)"),
+						nil,
+						targetModalInput,
+					)
+					b.Optional = true
+					return b
+				}(),
+			},
+		},
+	}
+}
+
+// BuildAddCrewModal builds the modal to register a new crew member.
+func (s *UIService) BuildAddCrewModal(sites []model.Site, channelID string) slack.ModalViewRequest {
+	roleOptions := []*slack.OptionBlockObject{
+		slack.NewOptionBlockObject("Pemanen", txt("🌾 Pemanen"), txt("Tenaga pemanen kelapa sawit")),
+		slack.NewOptionBlockObject("Mandor", txt("👷 Mandor"), txt("Pengawas operasional lapangan")),
+		slack.NewOptionBlockObject("Supir", txt("🚚 Supir"), txt("Pengangkut hasil panen / logistik")),
+		slack.NewOptionBlockObject("Perawatan", txt("🌿 Perawatan"), txt("Tenaga semprot, pupuk, atau pruning")),
+	}
+
+	siteOptions := []*slack.OptionBlockObject{
+		slack.NewOptionBlockObject("ALL", txt("🌐 Semua Kebun (Universal)"), txt("Dapat bertugas di seluruh lokasi kebun")),
+	}
+	for _, site := range sites {
+		siteOptions = append(siteOptions, slack.NewOptionBlockObject(
+			site.ID,
+			txt(site.Name),
+			txt(site.Location),
+		))
+	}
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("👷 Tambah Pegawai"),
+		Close:           txt("Batal"),
+		Submit:          txt("Simpan Pegawai"),
+		CallbackID:      "add_crew_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("Registrasi Pegawai / Crew")),
+				slack.NewInputBlock(
+					"crew_name_block",
+					txt("Nama Lengkap"),
+					nil,
+					slack.NewPlainTextInputBlockElement(txt("Contoh: Pak Slamet"), "crew_name"),
+				),
+				slack.NewInputBlock(
+					"crew_role_block",
+					txt("Peran / Jabatan"),
+					nil,
+					slack.NewOptionsSelectBlockElement(
+						slack.OptTypeStatic,
+						txt("Pilih peran..."),
+						"crew_role",
+						roleOptions...,
+					),
+				),
+				slack.NewInputBlock(
+					"crew_site_block",
+					txt("Penempatan Kebun"),
+					nil,
+					slack.NewOptionsSelectBlockElement(
+						slack.OptTypeStatic,
+						txt("Pilih kebun tugas..."),
+						"site_id",
+						siteOptions...,
+					),
+				),
+			},
+		},
+	}
+}
+
+// BuildAddCategoryModal builds the modal to register a new operational category.
+func (s *UIService) BuildAddCategoryModal(channelID string) slack.ModalViewRequest {
+	typeOptions := []*slack.OptionBlockObject{
+		slack.NewOptionBlockObject("OPEX", txt("💰 OPEX (Biaya Operasional)"), txt("Biaya harian, pupuk, bensin, perawatan, dll")),
+	}
+
+	multOptions := []*slack.OptionBlockObject{
+		slack.NewOptionBlockObject("FALSE", txt("❌ Tanpa Pengali Satuan"), txt("Hanya input nominal total Rupiah biasa")),
+		slack.NewOptionBlockObject("TRUE", txt("✅ Ada Pengali Satuan"), txt("Mendukung input jumlah x harga satuan")),
+	}
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("🏷️ Tambah Kategori"),
+		Close:           txt("Batal"),
+		Submit:          txt("Simpan Kategori"),
+		CallbackID:      "add_category_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("Kategori Biaya Operasional")),
+				slack.NewInputBlock(
+					"cat_name_block",
+					txt("Nama Kategori"),
+					nil,
+					slack.NewPlainTextInputBlockElement(txt("Contoh: Racun Rumput"), "cat_name"),
+				),
+				slack.NewInputBlock(
+					"cat_type_block",
+					txt("Tipe Kategori"),
+					nil,
+					slack.NewOptionsSelectBlockElement(
+						slack.OptTypeStatic,
+						txt("Pilih tipe..."),
+						"cat_type",
+						typeOptions...,
+					),
+				),
+				slack.NewInputBlock(
+					"cat_multiplier_block",
+					txt("Pengali Volume / Satuan"),
+					nil,
+					slack.NewOptionsSelectBlockElement(
+						slack.OptTypeStatic,
+						txt("Pilih pengaturan..."),
+						"multiplier",
+						multOptions...,
+					),
+				),
+			},
+		},
+	}
+}
+
+// BuildMasterDataSummaryModal builds a read-only modal showing active sites, crew, and categories.
+func (s *UIService) BuildMasterDataSummaryModal(sites []model.Site, crew []model.Crew, categories []model.Category, channelID string) slack.ModalViewRequest {
+	var blocks []slack.Block
+	blocks = append(blocks, slack.NewHeaderBlock(txt("📋 Ringkasan Data Master Aktif")))
+
+	// 1. Kebun
+	siteText := "*🌳 Kebun Terdaftar:*\n"
+	if len(sites) == 0 {
+		siteText += "_Belum ada kebun terdaftar._\n"
+	} else {
+		for _, st := range sites {
+			modalStr := "-"
+			if st.TargetModal > 0 {
+				modalStr = fmt.Sprintf("Rp%s", formatRupiah(st.TargetModal))
+			}
+			siteText += fmt.Sprintf("• *%s* (`%s`) — Lokasi: %s | Target Modal: %s\n", st.Name, st.ID, st.Location, modalStr)
+		}
+	}
+	blocks = append(blocks, slack.NewSectionBlock(md(siteText), nil, nil))
+	blocks = append(blocks, slack.NewDividerBlock())
+
+	// 2. Pegawai
+	crewText := "*👷 Pegawai Terdaftar:*\n"
+	if len(crew) == 0 {
+		crewText += "_Belum ada pegawai terdaftar._\n"
+	} else {
+		for _, c := range crew {
+			siteBadge := c.SiteID
+			if siteBadge == "ALL" || siteBadge == "" {
+				siteBadge = "Semua Kebun"
+			}
+			crewText += fmt.Sprintf("• *%s* (`%s`) — Peran: *%s* (%s)\n", c.Name, c.ID, c.Role, siteBadge)
+		}
+	}
+	blocks = append(blocks, slack.NewSectionBlock(md(crewText), nil, nil))
+	blocks = append(blocks, slack.NewDividerBlock())
+
+	// 3. Kategori
+	catText := "*🏷️ Kategori Biaya Operasional:*\n"
+	if len(categories) == 0 {
+		catText += "_Belum ada kategori terdaftar._\n"
+	} else {
+		for _, cat := range categories {
+			multBadge := "Tanpa Satuan"
+			if cat.MultiplierEnabled {
+				multBadge = "Ada Pengali"
+			}
+			catText += fmt.Sprintf("• *%s* (`%s`) — %s\n", cat.Name, cat.ID, multBadge)
+		}
+	}
+	blocks = append(blocks, slack.NewSectionBlock(md(catText), nil, nil))
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("📋 Data Master"),
+		Close:           txt("Tutup"),
+		CallbackID:      "master_data_summary_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
+// BuildMasterDataCreatedMessage builds an announcement message when a new master data entry is added.
+func (s *UIService) BuildMasterDataCreatedMessage(entityType, name, id, detail string) slack.Message {
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					slack.NewHeaderBlock(txt("✨ Data Master Baru Ditambahkan")),
+					slack.NewSectionBlock(
+						md(fmt.Sprintf("*Entitas:* %s\n*Nama:* *%s*\n*Kode/ID:* `%s`\n%s\n_Data telah disinkronkan ke Google Sheets._",
+							entityType, name, id, detail)),
+						nil,
+						nil,
+					),
+				},
+			},
+		},
+	}
+}
+

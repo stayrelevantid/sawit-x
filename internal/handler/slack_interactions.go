@@ -70,6 +70,12 @@ func (h *SlackInteractionsHandler) handleViewSubmission(w http.ResponseWriter, r
 		h.handlePiutangAction(w, r, payload)
 	case "investasi_entry_modal":
 		h.handleInvestasiEntry(w, r, payload)
+	case "add_site_modal":
+		h.handleAddSiteSubmit(w, r, payload)
+	case "add_crew_modal":
+		h.handleAddCrewSubmit(w, r, payload)
+	case "add_category_modal":
+		h.handleAddCategorySubmit(w, r, payload)
 	default:
 		log.Printf("[INTERACTION] Unknown callbackID: %s", payload.View.CallbackID)
 		w.WriteHeader(http.StatusOK)
@@ -184,6 +190,21 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 			return
 		case "view_maintenance_cost":
 			h.handleMaintenanceCost(w, r, payload)
+			return
+		case "btn_open_master_menu":
+			h.handleOpenMasterMenu(w, r, payload)
+			return
+		case "btn_open_add_site":
+			h.handleOpenAddSite(w, r, payload)
+			return
+		case "btn_open_add_crew":
+			h.handleOpenAddCrew(w, r, payload)
+			return
+		case "btn_open_add_category":
+			h.handleOpenAddCategory(w, r, payload)
+			return
+		case "btn_view_master_summary":
+			h.handleViewMasterSummary(w, r, payload)
 			return
 		}
 	}
@@ -975,3 +996,222 @@ func parseAmount(s string) (int64, error) {
 	s = strings.ReplaceAll(s, ",", "")
 	return strconv.ParseInt(s, 10, 64)
 }
+
+// --- Step 4: Master Data Handlers ---
+
+func (h *SlackInteractionsHandler) handleOpenMasterMenu(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	modal := h.uiService.BuildMasterDataMenuModal(meta.ChannelID)
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MASTER] Error updating view to master menu: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleOpenAddSite(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	modal := h.uiService.BuildAddSiteModal(meta.ChannelID)
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MASTER] Error opening add site modal: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleOpenAddCrew(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	sites, err := h.masterDataService.GetActiveSites(ctx)
+	if err != nil {
+		log.Printf("[MASTER] Error fetching active sites for crew registration: %v", err)
+	}
+
+	modal := h.uiService.BuildAddCrewModal(sites, meta.ChannelID)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MASTER] Error opening add crew modal: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleOpenAddCategory(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	modal := h.uiService.BuildAddCategoryModal(meta.ChannelID)
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MASTER] Error opening add category modal: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleViewMasterSummary(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	sites, _ := h.masterDataService.GetActiveSites(ctx)
+	crew, _ := h.masterDataService.GetActiveCrew(ctx)
+	categories, _ := h.masterDataService.GetActiveCategories(ctx)
+
+	modal := h.uiService.BuildMasterDataSummaryModal(sites, crew, categories, meta.ChannelID)
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[MASTER] Error opening master summary modal: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleAddSiteSubmit(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	values := payload.View.State.Values
+
+	siteName := strings.TrimSpace(values["site_name_block"]["site_name"].Value)
+	siteLocation := strings.TrimSpace(values["site_location_block"]["site_location"].Value)
+	targetModalStr := ""
+	if targetBlock, ok := values["site_target_block"]; ok {
+		if targetInput, ok2 := targetBlock["target_modal"]; ok2 {
+			targetModalStr = targetInput.Value
+		}
+	}
+
+	if siteName == "" {
+		respondWithErrors(w, "site_name_block", "Nama kebun tidak boleh kosong")
+		return
+	}
+	if siteLocation == "" {
+		respondWithErrors(w, "site_location_block", "Lokasi kebun tidak boleh kosong")
+		return
+	}
+
+	var targetModal int64
+	if targetModalStr != "" {
+		tm, err := parseAmount(targetModalStr)
+		if err != nil || tm < 0 {
+			respondWithErrors(w, "site_target_block", "Target modal harus berupa angka bulat positif")
+			return
+		}
+		targetModal = tm
+	}
+
+	site, err := h.masterDataService.CreateSite(ctx, siteName, siteLocation, targetModal)
+	if err != nil {
+		log.Printf("[MASTER] Error creating site: %v", err)
+		respondWithErrors(w, "site_name_block", err.Error())
+		return
+	}
+
+	respondClear(w)
+
+	// Broadcast announcement to channel
+	go func() {
+		channel := getReportChannel()
+		detail := fmt.Sprintf("*Lokasi:* %s\n*Target Modal:* Rp%s", site.Location, service.FormatRupiah(site.TargetModal))
+		msg := h.uiService.BuildMasterDataCreatedMessage("Kebun / Lahan", site.Name, site.ID, detail)
+		_, _, _ = h.slackClient.PostMessage(channel, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	}()
+}
+
+func (h *SlackInteractionsHandler) handleAddCrewSubmit(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	values := payload.View.State.Values
+
+	crewName := strings.TrimSpace(values["crew_name_block"]["crew_name"].Value)
+	roleOption := values["crew_role_block"]["crew_role"].SelectedOption
+	siteOption := values["crew_site_block"]["site_id"].SelectedOption
+
+	if crewName == "" {
+		respondWithErrors(w, "crew_name_block", "Nama pegawai tidak boleh kosong")
+		return
+	}
+	if roleOption.Value == "" {
+		respondWithErrors(w, "crew_role_block", "Pilih salah satu peran pegawai")
+		return
+	}
+	if siteOption.Value == "" {
+		respondWithErrors(w, "crew_site_block", "Pilih penempatan kebun")
+		return
+	}
+
+	role := roleOption.Value
+	siteID := siteOption.Value
+
+	crew, err := h.masterDataService.CreateCrew(ctx, crewName, role, siteID)
+	if err != nil {
+		log.Printf("[MASTER] Error creating crew: %v", err)
+		respondWithErrors(w, "crew_name_block", err.Error())
+		return
+	}
+
+	respondClear(w)
+
+	// Broadcast announcement to channel
+	go func() {
+		channel := getReportChannel()
+		detail := fmt.Sprintf("*Peran:* %s\n*Penempatan:* %s", crew.Role, siteOption.Text.Text)
+		msg := h.uiService.BuildMasterDataCreatedMessage("Pegawai / Tenaga Kerja", crew.Name, crew.ID, detail)
+		_, _, _ = h.slackClient.PostMessage(channel, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	}()
+}
+
+func (h *SlackInteractionsHandler) handleAddCategorySubmit(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	values := payload.View.State.Values
+
+	catName := strings.TrimSpace(values["cat_name_block"]["cat_name"].Value)
+	typeOption := values["cat_type_block"]["cat_type"].SelectedOption
+	multOption := values["cat_multiplier_block"]["multiplier"].SelectedOption
+
+	if catName == "" {
+		respondWithErrors(w, "cat_name_block", "Nama kategori biaya tidak boleh kosong")
+		return
+	}
+	catType := "OPEX"
+	if typeOption.Value != "" {
+		catType = typeOption.Value
+	}
+	multEnabled := false
+	if multOption.Value == "TRUE" {
+		multEnabled = true
+	}
+
+	category, err := h.masterDataService.CreateCategory(ctx, catName, catType, multEnabled)
+	if err != nil {
+		log.Printf("[MASTER] Error creating category: %v", err)
+		respondWithErrors(w, "cat_name_block", err.Error())
+		return
+	}
+
+	respondClear(w)
+
+	// Broadcast announcement to channel
+	go func() {
+		channel := getReportChannel()
+		multLabel := "Tanpa Pengali Satuan"
+		if category.MultiplierEnabled {
+			multLabel = "Ada Pengali Satuan"
+		}
+		detail := fmt.Sprintf("*Tipe:* %s\n*Pengali:* %s", category.Type, multLabel)
+		msg := h.uiService.BuildMasterDataCreatedMessage("Kategori Biaya Operasional", category.Name, category.ID, detail)
+		_, _, _ = h.slackClient.PostMessage(channel, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	}()
+}
+

@@ -11,6 +11,7 @@ import (
 
 	"github.com/indragiri/sawit-x/internal/model"
 	"github.com/indragiri/sawit-x/internal/service"
+	"github.com/slack-go/slack"
 )
 
 // mockSheetsClient is a fake SheetsClient for testing without real GCP calls.
@@ -1091,4 +1092,202 @@ func TestCheckDuplicateTransaction_BypassWithNotes(t *testing.T) {
 		t.Errorf("expected duplicate check to be bypassed when notes contains 'konfirmasi'")
 	}
 }
+
+// ---- Master Data Creation Tests ----
+
+func TestCreateSite_SuccessAndAutoIncrement(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:F": {
+				{"SITE_001", "Kebun Induk", "Kalimantan", "ACTIVE", "50000000", "2026-01-01"},
+				{"SITE_002", "Kebun Plasma", "Sumatera", "ACTIVE", "30000000", "2026-01-02"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	site, err := mds.CreateSite(context.Background(), "Kebun Baru Mandiri", "Riau", 75000000)
+	if err != nil {
+		t.Fatalf("unexpected error creating site: %v", err)
+	}
+
+	if site.ID != "SITE_003" {
+		t.Errorf("expected ID SITE_003, got %s", site.ID)
+	}
+	if site.Name != "Kebun Baru Mandiri" {
+		t.Errorf("expected name 'Kebun Baru Mandiri', got %s", site.Name)
+	}
+	if len(mock.appendedRows) != 1 {
+		t.Fatalf("expected 1 appended row, got %d", len(mock.appendedRows))
+	}
+	row := mock.appendedRows[0]
+	if row[0] != "SITE_003" || row[1] != "Kebun Baru Mandiri" || row[3] != "ACTIVE" {
+		t.Errorf("unexpected appended row data: %v", row)
+	}
+}
+
+func TestCreateSite_DuplicateNameError(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:F": {
+				{"SITE_001", "Kebun Induk", "Kalimantan", "ACTIVE", "50000000", "2026-01-01"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	_, err := mds.CreateSite(context.Background(), "  kebun induk  ", "Kalimantan", 10000000)
+	if err == nil {
+		t.Fatalf("expected error for duplicate site name, got nil")
+	}
+	if !strings.Contains(err.Error(), "sudah terdaftar") {
+		t.Errorf("expected 'sudah terdaftar' error message, got: %v", err)
+	}
+}
+
+func TestCreateCrew_SuccessAndRoleValidation(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Crew!A2:E": {
+				{"CREW_001", "Budi", "Mandor", "SITE_001", "ACTIVE"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+
+	// Valid role: Pemanen
+	crew, err := mds.CreateCrew(context.Background(), "Pak Joko", "Pemanen", "SITE_001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if crew.ID != "CREW_002" {
+		t.Errorf("expected ID CREW_002, got %s", crew.ID)
+	}
+	if crew.Role != "Pemanen" {
+		t.Errorf("expected role 'Pemanen', got %s", crew.Role)
+	}
+
+	// Invalid role: Direktur
+	_, err = mds.CreateCrew(context.Background(), "Pak Bos", "Direktur", "SITE_001")
+	if err == nil {
+		t.Fatalf("expected error for invalid role, got nil")
+	}
+	if !strings.Contains(err.Error(), "peran tidak valid") {
+		t.Errorf("expected 'peran tidak valid' error message, got: %v", err)
+	}
+}
+
+func TestCreateCrew_DuplicateError(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Crew!A2:E": {
+				{"CREW_001", "Budi Santoso", "Mandor", "SITE_001", "ACTIVE"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	_, err := mds.CreateCrew(context.Background(), "budi santoso", "Pemanen", "SITE_001")
+	if err == nil {
+		t.Fatalf("expected error for duplicate crew in same site, got nil")
+	}
+	if !strings.Contains(err.Error(), "sudah terdaftar") {
+		t.Errorf("expected 'sudah terdaftar' error message, got: %v", err)
+	}
+}
+
+func TestCreateCategory_SuccessAndSlugGen(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Categories!A2:E": {
+				{"CAT_PUPUK", "Pupuk", "OPEX", "TRUE", "ACTIVE"},
+			},
+		},
+	}
+
+	mds := service.NewMasterDataService(mock)
+	cat, err := mds.CreateCategory(context.Background(), "Racun Rumput / Herbisida", "OPEX", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cat.ID != "CAT_RACUN_RUMPUT_HERBISIDA" {
+		t.Errorf("expected ID 'CAT_RACUN_RUMPUT_HERBISIDA', got %s", cat.ID)
+	}
+	if cat.MultiplierEnabled {
+		t.Errorf("expected MultiplierEnabled false, got true")
+	}
+
+	// Duplicate check
+	_, err = mds.CreateCategory(context.Background(), "pupuk", "OPEX", true)
+	if err == nil {
+		t.Fatalf("expected duplicate error, got nil")
+	}
+}
+
+func TestUIService_BuildSiteSelectionModal_HasSubtleMasterButton(t *testing.T) {
+	uis := service.NewUIService()
+	sites := []model.Site{
+		{ID: "SITE_001", Name: "Kebun Induk", Location: "Riau"},
+	}
+
+	modal := uis.BuildSiteSelectionModal(sites, "C12345")
+	if modal.CallbackID != "site_selection_modal" {
+		t.Errorf("expected callback_id 'site_selection_modal', got %s", modal.CallbackID)
+	}
+
+	// Verify button exists in blocks
+	found := false
+	for _, block := range modal.Blocks.BlockSet {
+		if actBlock, ok := block.(*slack.ActionBlock); ok {
+			for _, elem := range actBlock.Elements.ElementSet {
+				if btn, ok := elem.(*slack.ButtonBlockElement); ok && btn.ActionID == "btn_open_master_menu" {
+					found = true
+					if btn.Style != "" {
+						t.Errorf("expected master menu button to have NO style (unhighlighted), got style: %s", btn.Style)
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected subtle btn_open_master_menu button in modal blocks")
+	}
+}
+
+func TestUIService_BuildAddCrewModal_RoleOptions(t *testing.T) {
+	uis := service.NewUIService()
+	modal := uis.BuildAddCrewModal([]model.Site{}, "C12345")
+
+	if modal.CallbackID != "add_crew_modal" {
+		t.Errorf("expected callback_id 'add_crew_modal', got %s", modal.CallbackID)
+	}
+
+	foundRoleBlock := false
+	for _, block := range modal.Blocks.BlockSet {
+		if inputBlock, ok := block.(*slack.InputBlock); ok && inputBlock.BlockID == "crew_role_block" {
+			foundRoleBlock = true
+			if selectElem, ok := inputBlock.Element.(*slack.SelectBlockElement); ok {
+				expectedRoles := map[string]bool{
+					"Pemanen":   true,
+					"Mandor":    true,
+					"Supir":     true,
+					"Perawatan": true,
+				}
+				if len(selectElem.Options) != 4 {
+					t.Errorf("expected 4 strictly defined roles, got %d", len(selectElem.Options))
+				}
+				for _, opt := range selectElem.Options {
+					if !expectedRoles[opt.Value] {
+						t.Errorf("unexpected role option: %s", opt.Value)
+					}
+				}
+			}
+		}
+	}
+	if !foundRoleBlock {
+		t.Errorf("expected crew_role_block in AddCrewModal")
+	}
+}
+
 

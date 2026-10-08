@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -961,4 +962,185 @@ func (s *MasterDataService) CheckDuplicateTransaction(ctx context.Context, entry
 
 	return false, nil
 }
+
+// CreateSite adds a new site to the Sites sheet.
+// Returns error if name is empty or already exists (case-insensitive).
+func (s *MasterDataService) CreateSite(ctx context.Context, name, location string, targetModal int64) (*model.Site, error) {
+	name = strings.TrimSpace(name)
+	location = strings.TrimSpace(location)
+	if name == "" {
+		return nil, fmt.Errorf("nama kebun tidak boleh kosong")
+	}
+
+	rows, err := s.sheetsClient.ReadSpreadsheet("Sites!A2:F")
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca data master kebun: %w", err)
+	}
+
+	var maxNum int
+	re := regexp.MustCompile(`^SITE_(\d+)$`)
+	for _, row := range rows {
+		if len(row) > 1 {
+			existingName := strings.TrimSpace(fmt.Sprintf("%v", row[1]))
+			if strings.EqualFold(existingName, name) {
+				return nil, fmt.Errorf("kebun dengan nama '%s' sudah terdaftar", name)
+			}
+		}
+		if len(row) > 0 {
+			siteID := fmt.Sprintf("%v", row[0])
+			if matches := re.FindStringSubmatch(siteID); len(matches) == 2 {
+				if n, err := strconv.Atoi(matches[1]); err == nil && n > maxNum {
+					maxNum = n
+				}
+			}
+		}
+	}
+
+	newID := fmt.Sprintf("SITE_%03d", maxNum+1)
+	today := time.Now().Format("2006-01-02")
+	newRow := []interface{}{newID, name, location, "ACTIVE", targetModal, today}
+
+	if err := s.sheetsClient.AppendRow("Sites", newRow); err != nil {
+		return nil, fmt.Errorf("gagal menambahkan kebun ke Google Sheets: %w", err)
+	}
+
+	now, _ := time.Parse("2006-01-02", today)
+	site := &model.Site{
+		ID:          newID,
+		Name:        name,
+		Location:    location,
+		Status:      "ACTIVE",
+		TargetModal: targetModal,
+		CreatedAt:   now,
+	}
+	return site, nil
+}
+
+// CreateCrew adds a new crew member to the Crew sheet.
+// Returns error if name is empty, role is invalid, or if name already exists in the same site.
+func (s *MasterDataService) CreateCrew(ctx context.Context, name, role, siteID string) (*model.Crew, error) {
+	name = strings.TrimSpace(name)
+	role = strings.TrimSpace(role)
+	siteID = strings.TrimSpace(siteID)
+	if name == "" {
+		return nil, fmt.Errorf("nama pegawai tidak boleh kosong")
+	}
+	if role == "" {
+		return nil, fmt.Errorf("peran pegawai tidak boleh kosong")
+	}
+
+	// Validate role is strictly one of the allowed roles
+	allowedRoles := map[string]bool{
+		"Pemanen":   true,
+		"Mandor":    true,
+		"Supir":     true,
+		"Perawatan": true,
+	}
+	if !allowedRoles[role] {
+		return nil, fmt.Errorf("peran tidak valid. Pilihan: Pemanen, Mandor, Supir, Perawatan")
+	}
+
+	rows, err := s.sheetsClient.ReadSpreadsheet("Crew!A2:E")
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca data master pegawai: %w", err)
+	}
+
+	var maxNum int
+	re := regexp.MustCompile(`^(?:CREW_|CRW_)(\d+)$`)
+	for _, row := range rows {
+		if len(row) > 3 {
+			existingName := strings.TrimSpace(fmt.Sprintf("%v", row[1]))
+			existingSite := strings.TrimSpace(fmt.Sprintf("%v", row[3]))
+			if strings.EqualFold(existingName, name) && (existingSite == siteID || siteID == "ALL" || existingSite == "ALL") {
+				return nil, fmt.Errorf("pegawai dengan nama '%s' sudah terdaftar di kebun ini", name)
+			}
+		}
+		if len(row) > 0 {
+			crewID := fmt.Sprintf("%v", row[0])
+			if matches := re.FindStringSubmatch(crewID); len(matches) == 2 {
+				if n, err := strconv.Atoi(matches[1]); err == nil && n > maxNum {
+					maxNum = n
+				}
+			}
+		}
+	}
+
+	newID := fmt.Sprintf("CREW_%03d", maxNum+1)
+	newRow := []interface{}{newID, name, role, siteID, "ACTIVE"}
+
+	if err := s.sheetsClient.AppendRow("Crew", newRow); err != nil {
+		return nil, fmt.Errorf("gagal menambahkan pegawai ke Google Sheets: %w", err)
+	}
+
+	crew := &model.Crew{
+		ID:     newID,
+		Name:   name,
+		Role:   role,
+		SiteID: siteID,
+		Status: "ACTIVE",
+	}
+	return crew, nil
+}
+
+// CreateCategory adds a new operational expense category to the Categories sheet.
+// Returns error if name is empty or already exists.
+func (s *MasterDataService) CreateCategory(ctx context.Context, name, catType string, multiplierEnabled bool) (*model.Category, error) {
+	name = strings.TrimSpace(name)
+	catType = strings.TrimSpace(catType)
+	if name == "" {
+		return nil, fmt.Errorf("nama kategori biaya tidak boleh kosong")
+	}
+	if catType == "" {
+		catType = "OPEX"
+	}
+
+	rows, err := s.sheetsClient.ReadSpreadsheet("Categories!A2:E")
+	if err != nil {
+		return nil, fmt.Errorf("gagal membaca data master kategori: %w", err)
+	}
+
+	existingIDs := make(map[string]bool)
+	for _, row := range rows {
+		if len(row) > 1 {
+			existingName := strings.TrimSpace(fmt.Sprintf("%v", row[1]))
+			if strings.EqualFold(existingName, name) {
+				return nil, fmt.Errorf("kategori dengan nama '%s' sudah terdaftar", name)
+			}
+		}
+		if len(row) > 0 {
+			existingIDs[fmt.Sprintf("%v", row[0])] = true
+		}
+	}
+
+	// Generate clean slug ID, e.g. "Racun Rumput" -> "CAT_RACUN_RUMPUT"
+	cleanSlug := regexp.MustCompile(`[^a-zA-Z0-9]+`).ReplaceAllString(strings.ToUpper(name), "_")
+	cleanSlug = strings.Trim(cleanSlug, "_")
+	baseID := "CAT_" + cleanSlug
+	newID := baseID
+	counter := 2
+	for existingIDs[newID] {
+		newID = fmt.Sprintf("%s_%d", baseID, counter)
+		counter++
+	}
+
+	multStr := "FALSE"
+	if multiplierEnabled {
+		multStr = "TRUE"
+	}
+
+	newRow := []interface{}{newID, name, catType, multStr, "ACTIVE"}
+	if err := s.sheetsClient.AppendRow("Categories", newRow); err != nil {
+		return nil, fmt.Errorf("gagal menambahkan kategori ke Google Sheets: %w", err)
+	}
+
+	cat := &model.Category{
+		ID:                newID,
+		Name:              name,
+		Type:              catType,
+		MultiplierEnabled: multiplierEnabled,
+		Status:            "ACTIVE",
+	}
+	return cat, nil
+}
+
 
