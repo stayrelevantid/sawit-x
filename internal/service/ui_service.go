@@ -59,6 +59,12 @@ func (s *UIService) BuildSiteSelectionModal(sites []model.Site, channelID string
 					),
 				),
 				slack.NewDividerBlock(),
+				slack.NewContextBlock("", md("Akses kebun yang sudah diarsipkan:")),
+				slack.NewActionBlock(
+					"archive_menu_block",
+					slack.NewButtonBlockElement("btn_view_archived_sites", "VIEW_ARCHIVE", txt("📦 Lihat Arsip")),
+				),
+				slack.NewDividerBlock(),
 				slack.NewContextBlock("", md("Pengaturan sistem & data pendukung:")),
 				slack.NewActionBlock(
 					"master_menu_block",
@@ -75,6 +81,9 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 
 	pencatatanBtn := slack.NewButtonBlockElement("mode_pencatatan", "PENCATATAN", txt("✍️ Pencatatan Baru"))
 	pencatatanBtn.Style = slack.StylePrimary
+
+	archiveBtn := slack.NewButtonBlockElement("btn_archive_site", "ARCHIVE_SITE", txt("📦 Arsipkan Kebun"))
+	archiveBtn.Style = slack.StyleDanger
 
 	return slack.ModalViewRequest{
 		Type:            slack.VTModal,
@@ -123,6 +132,14 @@ func (s *UIService) BuildModeSelectionModal(state model.TransactionState) slack.
 					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
 					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
 					slack.NewButtonBlockElement("view_list_pruning", "PRUNING_LIST", txt("✂️ List Pruning")),
+				),
+				slack.NewDividerBlock(),
+
+				// Group 5: Pengaturan Kebun
+				slack.NewSectionBlock(md("*⚙️ Pengaturan Kebun*\n_Arsipkan kebun jika sudah dijual atau tidak ada aktivitas baru._"), nil, nil),
+				slack.NewActionBlock(
+					"archive_action_block",
+					archiveBtn,
 				),
 			},
 		},
@@ -1567,6 +1584,160 @@ func (s *UIService) BuildMasterDataCreatedMessage(entityType, name, id, detail s
 					slack.NewSectionBlock(
 						md(fmt.Sprintf("*Entitas:* %s\n*Nama:* *%s*\n*Kode/ID:* `%s`\n%s\n_Data telah disinkronkan ke Google Sheets._",
 							entityType, name, id, detail)),
+						nil,
+						nil,
+					),
+				},
+			},
+		},
+	}
+}
+
+// BuildArchivedSiteListModal builds modal with dropdown of archived sites or empty message.
+func (s *UIService) BuildArchivedSiteListModal(sites []model.Site, channelID string) slack.ModalViewRequest {
+	if len(sites) == 0 {
+		return slack.ModalViewRequest{
+			Type:       slack.VTModal,
+			Title:      txt("📦 Arsip Kebun"),
+			Close:      txt("Tutup"),
+			CallbackID: "archived_sites_empty_modal",
+			Blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					slack.NewHeaderBlock(txt("Tidak Ada Kebun Terarsip")),
+					slack.NewSectionBlock(md("Saat ini belum ada kebun yang diarsipkan.\n\nKebun yang diarsipkan melalui tombol *📦 Arsipkan Kebun* akan muncul di sini."), nil, nil),
+				},
+			},
+		}
+	}
+
+	var siteOptions []*slack.OptionBlockObject
+	for _, site := range sites {
+		desc := site.Location
+		if site.ArchivedAt != nil {
+			desc = fmt.Sprintf("%s (Arsip: %s)", site.Location, site.ArchivedAt.Format("02 Jan 2006"))
+		}
+		siteOptions = append(siteOptions, slack.NewOptionBlockObject(
+			site.ID,
+			txt(site.Name),
+			txt(desc),
+		))
+	}
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("📦 Arsip Kebun"),
+		Close:           txt("Batal"),
+		Submit:          txt("Buka Arsip"),
+		CallbackID:      "archived_site_selection_modal",
+		PrivateMetadata: fmt.Sprintf(`{"channel_id":"%s"}`, channelID),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("Pilih Kebun Terarsip")),
+				slack.NewContextBlock("", md("Pilih kebun yang sudah diarsipkan untuk melihat laporan & riwayat transaksi historis.")),
+				slack.NewInputBlock(
+					"archived_site_block",
+					txt("Kebun"),
+					nil,
+					slack.NewOptionsSelectBlockElement(
+						slack.OptTypeStatic,
+						txt("Pilih kebun terarsip..."),
+						"site_id",
+						siteOptions...,
+					),
+				),
+			},
+		},
+	}
+}
+
+// BuildArchivedModeSelectionModal builds the read-only menu for an archived site.
+func (s *UIService) BuildArchivedModeSelectionModal(state model.TransactionState, archivedAt string) slack.ModalViewRequest {
+	stateJSON, _ := json.Marshal(state)
+
+	dateInfo := ""
+	if archivedAt != "" {
+		dateInfo = fmt.Sprintf(" pada tanggal *%s*", archivedAt)
+	}
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("📦 Menu Arsip Kebun"),
+		Close:           txt("Tutup"),
+		CallbackID:      "mode_selection_modal",
+		PrivateMetadata: string(stateJSON),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt(fmt.Sprintf("📦 Kebun: %s (Arsip)", state.SiteName))),
+				slack.NewContextBlock("", md(fmt.Sprintf("⚠️ Kebun ini telah diarsipkan%s. *Data bersifat Read-Only* (tidak dapat ditambah atau diubah).", dateInfo))),
+				slack.NewDividerBlock(),
+
+				// Group 1: Rekap & Keuangan
+				slack.NewSectionBlock(md("*📊 Rekap & Keuangan*\n_Ringkasan performa laba/rugi kebun, biaya perawatan, dan rekap saldo kasbon pegawai._"), nil, nil),
+				slack.NewActionBlock(
+					"group_keuangan_block",
+					slack.NewButtonBlockElement("view_report", "REKAP", txt("📊 Lihat Rekap Kebun")),
+					slack.NewButtonBlockElement("view_rekap_hutang_pegawai", "CREW_DEBT_LIST", txt("📋 Rekap Hutang Pegawai")),
+					slack.NewButtonBlockElement("view_list_hutang_lengkap", "HUTANG_LOG_LIST", txt("📜 List Lengkap Kasbon")),
+					slack.NewButtonBlockElement("view_maintenance_cost", "MAINTENANCE_COST", txt("💰 Rekap Biaya Perawatan")),
+				),
+				slack.NewDividerBlock(),
+
+				// Group 2: Riwayat Hasil Panen
+				slack.NewSectionBlock(md("*🌾 Riwayat Hasil Panen*\n_Daftar histori timbangan panen, harga/kg, dan pendapatan bersih._"), nil, nil),
+				slack.NewActionBlock(
+					"group_panen_block",
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_ini", "PANEN_YEAR_THIS", txt("📅 Panen 1 Tahun Ini")),
+					slack.NewButtonBlockElement("view_list_panen_1_tahun_lalu", "PANEN_YEAR_LAST", txt("📅 Panen 1 Tahun Lalu")),
+				),
+				slack.NewDividerBlock(),
+
+				// Group 3: Log Perawatan Kebun
+				slack.NewSectionBlock(md("*🌿 Perawatan Kebun*\n_Histori pembelian pupuk, penyemprotan, dan ongkos pruning._"), nil, nil),
+				slack.NewActionBlock(
+					"group_perawatan_block",
+					slack.NewButtonBlockElement("view_list_pupuk", "PUPUK_LIST", txt("🧪 List Pembelian Pupuk")),
+					slack.NewButtonBlockElement("view_list_semprot", "SEMPROT_LIST", txt("🌧️ List Penyemprotan")),
+					slack.NewButtonBlockElement("view_list_pruning", "PRUNING_LIST", txt("✂️ List Pruning")),
+				),
+			},
+		},
+	}
+}
+
+// BuildArchiveConfirmationModal builds modal asking for confirmation before archiving.
+func (s *UIService) BuildArchiveConfirmationModal(state model.TransactionState) slack.ModalViewRequest {
+	stateJSON, _ := json.Marshal(state)
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("📦 Konfirmasi Arsip"),
+		Close:           txt("Batal"),
+		Submit:          txt("Ya, Arsipkan"),
+		CallbackID:      "archive_site_confirm_modal",
+		PrivateMetadata: string(stateJSON),
+		Blocks: slack.Blocks{
+			BlockSet: []slack.Block{
+				slack.NewHeaderBlock(txt("⚠️ Konfirmasi Pengarsipan")),
+				slack.NewSectionBlock(
+					md(fmt.Sprintf("Apakah Anda yakin ingin mengarsipkan *%s*?\n\n*Konsekuensi Pengarsipan:*\n• Kebun tidak akan muncul lagi di dropdown pencatatan utama.\n• Seluruh tombol pencatatan baru (*Panen, Operasional, Piutang, Investasi*) akan dinonaktifkan permanen.\n• Seluruh laporan historis, rekap laba/rugi, dan log tetap dapat dilihat melalui menu *📦 Lihat Arsip*.", state.SiteName)),
+					nil,
+					nil,
+				),
+				slack.NewContextBlock("", md("💡 _Tindakan ini cocok untuk lahan yang sudah dijual atau sudah tidak beroperasi._")),
+			},
+		},
+	}
+}
+
+// BuildSiteArchivedMessage builds an announcement message when a site is archived.
+func (s *UIService) BuildSiteArchivedMessage(siteName, date string) slack.Message {
+	return slack.Message{
+		Msg: slack.Msg{
+			Blocks: slack.Blocks{
+				BlockSet: []slack.Block{
+					slack.NewHeaderBlock(txt("📦 Kebun Berhasil Diarsipkan")),
+					slack.NewSectionBlock(
+						md(fmt.Sprintf("Kebun *%s* telah berhasil diarsipkan pada %s.\n\n• Kebun tidak lagi muncul di menu pencatatan utama.\n• Riwayat transaksi & rekap tetap dapat diakses melalui menu *📦 Lihat Arsip* di `/sawit-x`.", siteName, date)),
 						nil,
 						nil,
 					),

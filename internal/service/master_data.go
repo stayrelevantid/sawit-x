@@ -23,54 +23,101 @@ func NewMasterDataService(sheetsClient client.SheetsReader) *MasterDataService {
 	}
 }
 
-func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, error) {
-	// X_MASTER tab: Sites — columns: id, name, location, status, target_modal
-	rows, err := s.sheetsClient.ReadSpreadsheet("Sites!A2:E")
+func parseSiteRow(row []interface{}) model.Site {
+	id := fmt.Sprintf("%v", row[0])
+	name := fmt.Sprintf("%v", row[1])
+
+	location := ""
+	if len(row) >= 3 {
+		location = fmt.Sprintf("%v", row[2])
+	}
+
+	status := "INACTIVE"
+	if len(row) >= 4 {
+		status = fmt.Sprintf("%v", row[3])
+	}
+
+	var targetModal int64
+	if len(row) >= 5 {
+		val := fmt.Sprintf("%v", row[4])
+		val = strings.ReplaceAll(val, ".", "")
+		val = strings.ReplaceAll(val, ",", "")
+		targetModal, _ = strconv.ParseInt(val, 10, 64)
+	}
+
+	var createdAt time.Time
+	if len(row) >= 6 {
+		val := fmt.Sprintf("%v", row[5])
+		createdAt, _ = time.Parse("2006-01-02", val)
+	}
+
+	var archivedAt *time.Time
+	if len(row) >= 7 {
+		val := strings.TrimSpace(fmt.Sprintf("%v", row[6]))
+		if val != "" {
+			if t, err := time.Parse("2006-01-02", val); err == nil {
+				archivedAt = &t
+			}
+		}
+	}
+
+	return model.Site{
+		ID:          id,
+		Name:        name,
+		Location:    location,
+		Status:      status,
+		TargetModal: targetModal,
+		CreatedAt:   createdAt,
+		ArchivedAt:  archivedAt,
+	}
+}
+
+// GetAllSites returns all sites regardless of status (ACTIVE, INACTIVE, ARCHIVED).
+func (s *MasterDataService) GetAllSites(ctx context.Context) ([]model.Site, error) {
+	rows, err := s.sheetsClient.ReadSpreadsheet("Sites!A2:G")
 	if err != nil {
 		return nil, err
 	}
 
 	var sites []model.Site
-	for i, row := range rows {
-		if len(row) < 2 { // Min id and name
+	for _, row := range rows {
+		if len(row) < 2 {
 			continue
 		}
+		sites = append(sites, parseSiteRow(row))
+	}
+	return sites, nil
+}
 
-		id := fmt.Sprintf("%v", row[0])
-		name := fmt.Sprintf("%v", row[1])
+func (s *MasterDataService) GetActiveSites(ctx context.Context) ([]model.Site, error) {
+	allSites, err := s.GetAllSites(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-		status := "INACTIVE"
-		if len(row) >= 4 {
-			status = fmt.Sprintf("%v", row[3])
+	var sites []model.Site
+	for _, site := range allSites {
+		if site.Status == "ACTIVE" {
+			log.Printf("[MASTER] Loaded active site: %s (%s), Target: %d", site.Name, site.ID, site.TargetModal)
+			sites = append(sites, site)
 		}
+	}
+	return sites, nil
+}
 
-		if status != "ACTIVE" {
-			continue
+// GetArchivedSites returns all sites with status ARCHIVED.
+func (s *MasterDataService) GetArchivedSites(ctx context.Context) ([]model.Site, error) {
+	allSites, err := s.GetAllSites(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var sites []model.Site
+	for _, site := range allSites {
+		if site.Status == "ARCHIVED" {
+			log.Printf("[MASTER] Loaded archived site: %s (%s)", site.Name, site.ID)
+			sites = append(sites, site)
 		}
-
-		var targetModal int64
-		if len(row) >= 5 {
-			val := fmt.Sprintf("%v", row[4])
-			val = strings.ReplaceAll(val, ".", "")
-			val = strings.ReplaceAll(val, ",", "")
-			targetModal, _ = strconv.ParseInt(val, 10, 64)
-		}
-
-		log.Printf("[MASTER] Loaded active site: %s (%s), Target: %d", name, id, targetModal)
-
-		sites = append(sites, model.Site{
-			ID:   id,
-			Name: name,
-			Location: func() string {
-				if len(row) >= 3 {
-					return fmt.Sprintf("%v", row[2])
-				}
-				return ""
-			}(),
-			Status:      status,
-			TargetModal: targetModal,
-		})
-		_ = i // future use
 	}
 	return sites, nil
 }
@@ -86,6 +133,56 @@ func (s *MasterDataService) GetSiteByID(ctx context.Context, siteID string) (mod
 		}
 	}
 	return model.Site{}, fmt.Errorf("site %s not found", siteID)
+}
+
+// GetSiteByIDAny returns a site by ID regardless of status.
+func (s *MasterDataService) GetSiteByIDAny(ctx context.Context, siteID string) (model.Site, error) {
+	sites, err := s.GetAllSites(ctx)
+	if err != nil {
+		return model.Site{}, err
+	}
+	for _, site := range sites {
+		if site.ID == siteID {
+			return site, nil
+		}
+	}
+	return model.Site{}, fmt.Errorf("site %s not found", siteID)
+}
+
+// ArchiveSite changes a site's status to ARCHIVED and sets the archived_at date.
+func (s *MasterDataService) ArchiveSite(ctx context.Context, siteID string) error {
+	log.Printf("[MASTER] Archiving site %s", siteID)
+	rows, err := s.sheetsClient.ReadSpreadsheet("Sites!A2:A")
+	if err != nil {
+		log.Printf("[MASTER] Error reading Sites sheet: %v", err)
+		return err
+	}
+
+	for i, row := range rows {
+		if len(row) > 0 && fmt.Sprintf("%v", row[0]) == siteID {
+			rowNum := i + 2
+			// Update status in column D
+			statusRange := fmt.Sprintf("Sites!D%d", rowNum)
+			if err := s.sheetsClient.UpdateCell(statusRange, "ARCHIVED"); err != nil {
+				log.Printf("[MASTER] Error updating status for site %s: %v", siteID, err)
+				return err
+			}
+
+			// Update archived_at in column G
+			today := time.Now().Format("2006-01-02")
+			dateRange := fmt.Sprintf("Sites!G%d", rowNum)
+			if err := s.sheetsClient.UpdateCell(dateRange, today); err != nil {
+				log.Printf("[MASTER] Error updating archived_at for site %s: %v", siteID, err)
+				return err
+			}
+
+			log.Printf("[MASTER] Site %s successfully archived at row %d", siteID, rowNum)
+			return nil
+		}
+	}
+
+	log.Printf("[MASTER] Site %s not found in A2:A range", siteID)
+	return fmt.Errorf("site %s not found", siteID)
 }
 
 // UpdateSiteTarget updates the TargetModal for a specific site in the Sites sheet.
@@ -219,14 +316,8 @@ func (s *MasterDataService) GetCrewBalance(ctx context.Context, crewID string) (
 // GetSiteReport aggregates transaction data for a specific site from X_LOG.
 func (s *MasterDataService) GetSiteReport(ctx context.Context, siteID string) (model.SiteReport, error) {
 	// 1. Get Target Modal from Sites master
-	sites, _ := s.GetActiveSites(ctx)
-	var initialTargetModal int64
-	for _, site := range sites {
-		if site.ID == siteID {
-			initialTargetModal = site.TargetModal
-			break
-		}
-	}
+	site, _ := s.GetSiteByIDAny(ctx, siteID)
+	initialTargetModal := site.TargetModal
 
 	// 2. Fetch all logs for this site (Col A to Q)
 	// Column order: [0]log_id, [1]timestamp, [2]event_date, [3]module_type, [4]site_id, [5]site_name,
@@ -467,7 +558,7 @@ func (s *MasterDataService) SyncSiteReportToSheet(ctx context.Context, siteID st
 
 	// Ensure siteName is present
 	if siteName == "" {
-		site, err := s.GetSiteByID(ctx, siteID)
+		site, err := s.GetSiteByIDAny(ctx, siteID)
 		if err == nil {
 			siteName = site.Name
 		} else {

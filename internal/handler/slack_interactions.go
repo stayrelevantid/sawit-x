@@ -76,6 +76,10 @@ func (h *SlackInteractionsHandler) handleViewSubmission(w http.ResponseWriter, r
 		h.handleAddCrewSubmit(w, r, payload)
 	case "add_category_modal":
 		h.handleAddCategorySubmit(w, r, payload)
+	case "archived_site_selection_modal":
+		h.handleArchivedSiteSelection(w, r, payload)
+	case "archive_site_confirm_modal":
+		h.handleArchiveSiteExecute(w, r, payload)
 	default:
 		log.Printf("[INTERACTION] Unknown callbackID: %s", payload.View.CallbackID)
 		w.WriteHeader(http.StatusOK)
@@ -205,6 +209,12 @@ func (h *SlackInteractionsHandler) handleBlockActions(w http.ResponseWriter, r *
 			return
 		case "btn_view_master_summary":
 			h.handleViewMasterSummary(w, r, payload)
+			return
+		case "btn_view_archived_sites":
+			h.handleViewArchivedSites(w, r, payload)
+			return
+		case "btn_archive_site":
+			h.handleArchiveSiteConfirm(w, r, payload)
 			return
 		}
 	}
@@ -1212,6 +1222,111 @@ func (h *SlackInteractionsHandler) handleAddCategorySubmit(w http.ResponseWriter
 		detail := fmt.Sprintf("*Tipe:* %s\n*Pengali:* %s", category.Type, multLabel)
 		msg := h.uiService.BuildMasterDataCreatedMessage("Kategori Biaya Operasional", category.Name, category.ID, detail)
 		_, _, _ = h.slackClient.PostMessage(channel, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+	}()
+}
+
+// --- Step 5: Archive Handlers ---
+
+func (h *SlackInteractionsHandler) handleViewArchivedSites(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	var meta struct {
+		ChannelID string `json:"channel_id"`
+	}
+	_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &meta)
+
+	sites, err := h.masterDataService.GetArchivedSites(ctx)
+	if err != nil {
+		log.Printf("[ARCHIVE] Error fetching archived sites: %v", err)
+	}
+
+	modal := h.uiService.BuildArchivedSiteListModal(sites, meta.ChannelID)
+	_, err = h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[ARCHIVE] Error updating view to archived sites: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleArchivedSiteSelection(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	siteID := payload.View.State.Values["archived_site_block"]["site_id"].SelectedOption.Value
+	siteName := payload.View.State.Values["archived_site_block"]["site_id"].SelectedOption.Text.Text
+
+	site, err := h.masterDataService.GetSiteByIDAny(ctx, siteID)
+	archivedAt := ""
+	if err == nil {
+		siteName = site.Name
+		if site.ArchivedAt != nil {
+			archivedAt = site.ArchivedAt.Format("02 Jan 2006")
+		}
+	}
+
+	var prevState struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if payload.View.PrivateMetadata != "" {
+		_ = json.Unmarshal([]byte(payload.View.PrivateMetadata), &prevState)
+	}
+
+	state := model.TransactionState{
+		SiteID:    siteID,
+		SiteName:  siteName,
+		ChannelID: prevState.ChannelID,
+	}
+
+	modal := h.uiService.BuildArchivedModeSelectionModal(state, archivedAt)
+	respondWithUpdateView(w, modal)
+}
+
+func (h *SlackInteractionsHandler) handleArchiveSiteConfirm(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	var state model.TransactionState
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[ARCHIVE] Error unmarshalling private metadata: %v", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	modal := h.uiService.BuildArchiveConfirmationModal(state)
+	_, err := h.slackClient.UpdateView(modal, "", "", payload.View.ID)
+	if err != nil {
+		log.Printf("[ARCHIVE] Error showing archive confirmation modal: %v", err)
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *SlackInteractionsHandler) handleArchiveSiteExecute(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+	var state model.TransactionState
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &state); err != nil {
+		log.Printf("[ARCHIVE] Error unmarshalling private metadata: %v", err)
+		respondWithErrors(w, "", "Sesi tidak valid.")
+		return
+	}
+
+	if err := h.masterDataService.ArchiveSite(ctx, state.SiteID); err != nil {
+		log.Printf("[ARCHIVE] Error archiving site %s: %v", state.SiteID, err)
+		respondWithErrors(w, "", fmt.Sprintf("Gagal mengarsipkan kebun: %v", err))
+		return
+	}
+
+	respondClear(w)
+
+	// Send confirmation message to user and channel in background
+	go func() {
+		today := time.Now().Format("02 Jan 2006")
+		msg := h.uiService.BuildSiteArchivedMessage(state.SiteName, today)
+
+		// Send DM to user who archived
+		_, _, err := h.slackClient.PostMessage(payload.User.ID, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		if err != nil {
+			log.Printf("[ARCHIVE] Error sending DM to user: %v", err)
+		}
+
+		// Also send to report channel if configured
+		channel := getReportChannel()
+		if channel != "" && channel != payload.User.ID {
+			_, _, _ = h.slackClient.PostMessage(channel, slack.MsgOptionBlocks(msg.Blocks.BlockSet...))
+		}
 	}()
 }
 

@@ -33,12 +33,11 @@
 **UI Slack:**
 - Header: *"Pilih Lokasi Kebun"*
 - Dropdown: Daftar kebun aktif dari `X_MASTER[Sites]` (hanya `Status == ACTIVE`)
-- Tombol: **[Lanjut]** | **[Batal]**
+- Tombol: **[Lanjut]** | **[Batal]** | **[📦 Lihat Arsip]** *(Aksi: `btn_view_archived_sites`)*
 
 **System Logic:**
-1. Ambil `site_id` dan `site_name` dari pilihan user.
-2. Simpan ke `PrivateMetadata` sebagai `TransactionState`.
-3. Respon: **Update view** → tampilkan **Modal 2 (Mode Selection)**.
+1. Jika memilih kebun aktif & klik **[Lanjut]**: Ambil `site_id` dan `site_name` dari pilihan user, simpan ke `PrivateMetadata`, update view ke **Modal 2 (Mode Selection)**.
+2. Jika klik **[📦 Lihat Arsip]**: Ambil daftar kebun berstatus `ARCHIVED`, update view ke **Modal Pilih Kebun Terarsip (`archived_site_selection_modal`)**.
 
 ---
 
@@ -59,6 +58,8 @@
   - **🌿 Perawatan Kebun:**
     - **[🧪 List Pembelian Pupuk]**: Melihat daftar riwayat pembelian pupuk dan total akumulasi.
     - **[🌧️ List Penyemprotan]**: Melihat daftar riwayat pengeluaran operasional penyemprotan.
+  - **⚙️ Pengaturan Kebun:**
+    - **[📦 Arsipkan Kebun]** *(Tombol merah / Danger, aksi: `btn_archive_site`)*: Mengarsipkan kebun jika sudah dijual/nonaktif sehingga tidak ada mutasi baru.
 
 ---
 
@@ -198,31 +199,75 @@ Bot mengirimkan pesan (DM) ke user dengan ringkasan yang sama sebagai arsip/hist
 
 ---
 
+### Step 8 — Flow Arsipkan Kebun (`btn_archive_site`)
+
+*(Muncul jika user memilih "📦 Arsipkan Kebun" di Modal 2)*
+
+**UI Slack (Modal Konfirmasi):**
+- Callback ID: `archive_site_confirm_modal`
+- Title: *"Konfirmasi Arsip Kebun"*
+- Pesan peringatan: Menginfokan bahwa kebun yang diarsipkan tidak bisa menerima transaksi/pencatatan baru, namun seluruh data historis tetap bisa dilihat secara read-only.
+- Tombol: **[Ya, Arsipkan]** (Danger) | **[Batal]**
+
+**System Logic:**
+1. User menekan submit `archive_site_confirm_modal`.
+2. Backend memanggil `ArchiveSite(ctx, siteID)`.
+3. Mengupdate baris kebun di sheet `Sites`:
+   - Kolom D (`status`): diubah menjadi `ARCHIVED`
+   - Kolom G (`archived_at`): diisi timestamp saat ini (format `YYYY-MM-DD HH:MM:SS`)
+4. Mengirimkan pesan konfirmasi DM ke user dan notifikasi pengumuman ke Slack channel.
+
+---
+
+### Step 9 — Flow Akses Kebun Terarsip (Read-Only)
+
+*(Dipicu dengan menekan "📦 Lihat Arsip" pada Modal 1)*
+
+**UI Slack:**
+1. **Modal Daftar Kebun Terarsip (`archived_site_selection_modal`)**:
+   - Menampilkan dropdown daftar kebun yang berstatus `ARCHIVED`.
+   - Jika tidak ada kebun terarsip, menampilkan empty-state modal pemberitahuan.
+2. **Modal Mode Read-Only (`mode_selection_modal`)**:
+   - Setelah memilih kebun terarsip, terbuka menu dashboard kebun.
+   - **Pencegahan Transaksi Baru**: Tombol `[✍️ Pencatatan Baru]` dan `[📦 Arsipkan Kebun]` **disembunyikan**.
+   - User tetap memiliki akses penuh ke fitur reporting & historis: `[📊 Lihat Rekap Kebun]`, `[📋 Rekap Hutang Pegawai]`, `[📜 List Lengkap Kasbon]`, `[📅 Panen 1 Tahun Ini/Lalu]`, dan `[🌿 Perawatan Kebun]`.
+
+---
+
 ## 3. Skema Callback Modal
 
 ```
 /sawit-x
     │
     ▼
-site_selection_modal      ← Pilih Kebun
+site_selection_modal ──(btn_view_archived_sites)──▶ archived_site_selection_modal
+    │                                                        │
+    │ (Pilih kebun aktif)                                    │ (Pilih kebun arsip)
+    ▼                                                        ▼
+mode_selection_modal (Aktif)                        mode_selection_modal (Read-Only)
+    │                                                        │
+    ├── [✍️ Pencatatan Baru]                                  └── Fitur Rekap & Riwayat Saja
+    │        ▼                                                   (Pencatatan & Arsip disembunyikan)
+    │   module_selection_modal
+    │        ├── PANEN       ──▶ panen_entry_modal
+    │        │                        └── WriteLog (X_LOG)
+    │        ├── OPERASIONAL ──▶ operasional_entry_modal
+    │        │                        └── WriteLog (X_LOG)
+    │        ├── PIUTANG     ──▶ piutang_crew_select_modal
+    │        │                        │  GetCrewBalance (X_LOG)
+    │        │                        ▼
+    │        │                   piutang_action_modal
+    │        │                        └── WriteLog (X_LOG)
+    │        └── INVESTASI   ──▶ investasi_entry_modal
+    │                                 └── WriteLog (X_LOG)
     │
-    ▼
-module_selection_modal    ← Pilih Modul
+    ├── [📊 Rekap & Riwayat] ──▶ view_report, panen, kasbon, pupuk, etc.
     │
-    ├── PANEN      ──▶ panen_entry_modal
-    │                        └── WriteLog (X_LOG)
-    │
-    ├── OPERASIONAL ──▶ operasional_entry_modal
-    │                        └── WriteLog (X_LOG)
-    │
-    ├── PIUTANG    ──▶ piutang_crew_select_modal
-    │                        │  GetCrewBalance (X_LOG)
-    │                        ▼
-    │                   piutang_action_modal
-    │                        └── WriteLog (X_LOG)
-    │
-    └── INVESTASI  ──▶ investasi_entry_modal
-                             └── WriteLog (X_LOG)
+    └── [📦 Arsipkan Kebun] (btn_archive_site)
+             ▼
+        archive_site_confirm_modal
+             ▼
+        ArchiveSite (Sites: status=ARCHIVED, archived_at=now)
 ```
 
 ---

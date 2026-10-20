@@ -31,6 +31,15 @@ func (m *mockSheetsClient) ReadSpreadsheet(readRange string) ([][]interface{}, e
 		if data, ok := m.readRangeMap[readRange]; ok {
 			return data, nil
 		}
+		// Fallback for Sites ranges (e.g. Sites!A2:E vs Sites!A2:G)
+		if strings.HasPrefix(readRange, "Sites!") {
+			if data, ok := m.readRangeMap["Sites!A2:E"]; ok {
+				return data, nil
+			}
+			if data, ok := m.readRangeMap["Sites!A2:G"]; ok {
+				return data, nil
+			}
+		}
 	}
 	return m.readData, nil
 }
@@ -1291,3 +1300,252 @@ func TestUIService_BuildAddCrewModal_RoleOptions(t *testing.T) {
 }
 
 
+// --- Archive Feature Tests ---
+
+func TestGetArchivedSites_OnlyReturnsArchived(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:G": {
+				{"SITE_001", "Kebun Aktif", "Kalteng", "ACTIVE", "100000000", "2025-01-01", ""},
+				{"SITE_002", "Kebun Arsip", "Kalsel", "ARCHIVED", "50000000", "2025-03-01", "2026-10-10"},
+				{"SITE_003", "Kebun Tidak Aktif", "Kaltim", "INACTIVE", "0", "2025-05-01", ""},
+			},
+		},
+	}
+	svc := service.NewMasterDataService(mock)
+	sites, err := svc.GetArchivedSites(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sites) != 1 {
+		t.Fatalf("expected 1 archived site, got %d", len(sites))
+	}
+	if sites[0].ID != "SITE_002" {
+		t.Errorf("expected SITE_002, got %s", sites[0].ID)
+	}
+	if sites[0].Status != "ARCHIVED" {
+		t.Errorf("expected status ARCHIVED, got %s", sites[0].Status)
+	}
+	if sites[0].ArchivedAt == nil {
+		t.Errorf("expected ArchivedAt to be set")
+	} else if sites[0].ArchivedAt.Format("2006-01-02") != "2026-10-10" {
+		t.Errorf("expected ArchivedAt 2026-10-10, got %s", sites[0].ArchivedAt.Format("2006-01-02"))
+	}
+}
+
+func TestGetArchivedSites_EmptyWhenNoneArchived(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:G": {
+				{"SITE_001", "Kebun Aktif", "Kalteng", "ACTIVE", "100000000", "2025-01-01", ""},
+			},
+		},
+	}
+	svc := service.NewMasterDataService(mock)
+	sites, err := svc.GetArchivedSites(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sites) != 0 {
+		t.Errorf("expected 0 archived sites, got %d", len(sites))
+	}
+}
+
+func TestGetSiteByIDAny_ReturnsArchivedSite(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:G": {
+				{"SITE_001", "Kebun Aktif", "Kalteng", "ACTIVE", "100000000", "2025-01-01", ""},
+				{"SITE_002", "Kebun Arsip", "Kalsel", "ARCHIVED", "50000000", "2025-03-01", "2026-10-10"},
+			},
+		},
+	}
+	svc := service.NewMasterDataService(mock)
+
+	site, err := svc.GetSiteByIDAny(context.Background(), "SITE_002")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if site.ID != "SITE_002" {
+		t.Errorf("expected SITE_002, got %s", site.ID)
+	}
+	if !site.IsArchived() {
+		t.Errorf("expected site to be archived")
+	}
+}
+
+func TestGetSiteByIDAny_NotFound(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:G": {
+				{"SITE_001", "Kebun Aktif", "Kalteng", "ACTIVE", "100000000", "2025-01-01", ""},
+			},
+		},
+	}
+	svc := service.NewMasterDataService(mock)
+	_, err := svc.GetSiteByIDAny(context.Background(), "SITE_999")
+	if err == nil {
+		t.Errorf("expected error for missing site, got nil")
+	}
+}
+
+func TestArchiveSite_UpdatesStatusAndDate(t *testing.T) {
+	updatedCells := map[string]interface{}{}
+	mock := &mockSheetsClientWithUpdates{
+		mockSheetsClient: mockSheetsClient{
+			readRangeMap: map[string][][]interface{}{
+				"Sites!A2:A": {
+					{"SITE_001"},
+					{"SITE_002"},
+				},
+			},
+		},
+		updatedCells: updatedCells,
+	}
+	svc := service.NewMasterDataService(mock)
+	err := svc.ArchiveSite(context.Background(), "SITE_002")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updatedCells["Sites!D3"] != "ARCHIVED" {
+		t.Errorf("expected Sites!D3 = ARCHIVED, got %v", updatedCells["Sites!D3"])
+	}
+	// G column should be set to today
+	today := time.Now().Format("2006-01-02")
+	if updatedCells["Sites!G3"] != today {
+		t.Errorf("expected Sites!G3 = %s, got %v", today, updatedCells["Sites!G3"])
+	}
+}
+
+func TestArchiveSite_NotFound(t *testing.T) {
+	mock := &mockSheetsClient{
+		readRangeMap: map[string][][]interface{}{
+			"Sites!A2:A": {
+				{"SITE_001"},
+			},
+		},
+	}
+	svc := service.NewMasterDataService(mock)
+	err := svc.ArchiveSite(context.Background(), "SITE_999")
+	if err == nil {
+		t.Errorf("expected error for missing site, got nil")
+	}
+}
+
+// mockSheetsClientWithUpdates tracks UpdateCell calls in addition to reads.
+type mockSheetsClientWithUpdates struct {
+	mockSheetsClient
+	updatedCells map[string]interface{}
+}
+
+func (m *mockSheetsClientWithUpdates) UpdateCell(cellRange string, value interface{}) error {
+	m.updatedCells[cellRange] = value
+	return nil
+}
+
+func TestSiteIsArchived(t *testing.T) {
+	active := model.Site{Status: "ACTIVE"}
+	archived := model.Site{Status: "ARCHIVED"}
+	inactive := model.Site{Status: "INACTIVE"}
+
+	if active.IsArchived() {
+		t.Errorf("ACTIVE site should not be archived")
+	}
+	if !archived.IsArchived() {
+		t.Errorf("ARCHIVED site should be archived")
+	}
+	if inactive.IsArchived() {
+		t.Errorf("INACTIVE site should not be archived")
+	}
+}
+
+func TestBuildArchivedSiteListModal_WithSites(t *testing.T) {
+	uis := service.NewUIService()
+	archivedDate := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	sites := []model.Site{
+		{ID: "SITE_002", Name: "Kebun Arsip", Location: "Kalsel", Status: "ARCHIVED", ArchivedAt: &archivedDate},
+	}
+	modal := uis.BuildArchivedSiteListModal(sites, "C_CHANNEL")
+	if modal.CallbackID != "archived_site_selection_modal" {
+		t.Errorf("expected callbackID archived_site_selection_modal, got %s", modal.CallbackID)
+	}
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "SITE_002") {
+		t.Errorf("expected modal to contain SITE_002")
+	}
+	if !strings.Contains(string(modalJSON), "Kebun Arsip") {
+		t.Errorf("expected modal to contain Kebun Arsip")
+	}
+}
+
+func TestBuildArchivedSiteListModal_Empty(t *testing.T) {
+	uis := service.NewUIService()
+	modal := uis.BuildArchivedSiteListModal(nil, "C_CHANNEL")
+	if modal.CallbackID != "archived_sites_empty_modal" {
+		t.Errorf("expected callbackID archived_sites_empty_modal, got %s", modal.CallbackID)
+	}
+}
+
+func TestBuildArchiveConfirmationModal(t *testing.T) {
+	uis := service.NewUIService()
+	state := model.TransactionState{SiteID: "SITE_001", SiteName: "Kebun Induk"}
+	modal := uis.BuildArchiveConfirmationModal(state)
+	if modal.CallbackID != "archive_site_confirm_modal" {
+		t.Errorf("expected callbackID archive_site_confirm_modal, got %s", modal.CallbackID)
+	}
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "Kebun Induk") {
+		t.Errorf("expected modal to contain Kebun Induk")
+	}
+	if !strings.Contains(string(modalJSON), "Ya, Arsipkan") {
+		t.Errorf("expected modal to have submit button Ya, Arsipkan")
+	}
+}
+
+func TestBuildArchivedModeSelectionModal_ReadOnly(t *testing.T) {
+	uis := service.NewUIService()
+	state := model.TransactionState{SiteID: "SITE_002", SiteName: "Kebun Lama"}
+	modal := uis.BuildArchivedModeSelectionModal(state, "10 Oct 2026")
+
+	modalJSON, _ := json.Marshal(modal)
+	str := string(modalJSON)
+
+	// Should NOT contain pencatatan baru button
+	if strings.Contains(str, "mode_pencatatan") {
+		t.Errorf("archived modal should not contain pencatatan baru button")
+	}
+	// Should NOT contain archive site button
+	if strings.Contains(str, "btn_archive_site") {
+		t.Errorf("archived modal should not contain btn_archive_site button")
+	}
+	// Should contain reporting buttons
+	if !strings.Contains(str, "view_report") {
+		t.Errorf("archived modal should contain view_report button")
+	}
+	if !strings.Contains(str, "Arsip") {
+		t.Errorf("archived modal header should indicate archived status")
+	}
+}
+
+func TestBuildModeSelectionModal_HasArchiveButton(t *testing.T) {
+	uis := service.NewUIService()
+	state := model.TransactionState{SiteID: "SITE_001", SiteName: "Kebun Induk"}
+	modal := uis.BuildModeSelectionModal(state)
+
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "btn_archive_site") {
+		t.Errorf("mode selection modal should contain btn_archive_site button")
+	}
+}
+
+func TestBuildSiteSelectionModal_HasViewArchiveButton(t *testing.T) {
+	uis := service.NewUIService()
+	sites := []model.Site{
+		{ID: "SITE_001", Name: "Kebun Induk", Location: "Kalteng", Status: "ACTIVE"},
+	}
+	modal := uis.BuildSiteSelectionModal(sites, "C_CHANNEL")
+	modalJSON, _ := json.Marshal(modal)
+	if !strings.Contains(string(modalJSON), "btn_view_archived_sites") {
+		t.Errorf("site selection modal should contain btn_view_archived_sites button")
+	}
+}

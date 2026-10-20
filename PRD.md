@@ -160,9 +160,10 @@ GCP Cloud Function (Go 1.26) ──── Slack HMAC Verification
 | `id` | STRING | Contoh: `SITE_001`, `SITE_002` |
 | `name` | STRING | Contoh: `Kebun Induk`, `Kebun Plasma` |
 | `location` | STRING | Deskripsi lokasi geografis |
-| `status` | ENUM | `ACTIVE` / `INACTIVE` |
+| `status` | ENUM | `ACTIVE` / `INACTIVE` / `ARCHIVED` |
 | `target_modal` | INTEGER | Target balik modal (Rupiah) |
 | `created_at` | DATE | Tanggal kebun ditambahkan ke sistem |
+| `archived_at` | DATE | Tanggal kebun diarsipkan. Kosong jika belum di-archive. |
 
 **Sheet: `Categories`**
 
@@ -300,6 +301,13 @@ Menangani semua interaction dari modal Slack:
 - [x] Implementasi Phase 10: X_REKAP Synchronization.
 - [x] Implementasi Phase 11: Detailed Financial Reports.
 - [x] Implementasi Phase 12: UI/UX & Data Integrity Polish.
+
+### Fase 7: Archive Feature ✅
+- [x] Status enum update (`ACTIVE`, `INACTIVE`, `ARCHIVED`) dan kolom baru `archived_at` pada sheet `Sites`.
+- [x] Service layer untuk fetch archived sites (`GetArchivedSites`), get any site (`GetSiteByIDAny`), dan fungsi `ArchiveSite`.
+- [x] Slack UI Modal: tombol "📦 Lihat Arsip" di modal pilih kebun, modal daftar kebun terarsip, modal mode read-only untuk kebun terarsip, dan modal konfirmasi arsip kebun.
+- [x] Slack Interaction Handler: flow arsipkan kebun dengan konfirmasi, pencegahan mutasi baru pada kebun terarsip, dan notifikasi DM & channel.
+- [x] Unit test komprehensif untuk seluruh fungsionalitas archive.
 
 ---
 
