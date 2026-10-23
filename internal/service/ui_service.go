@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/indragiri/sawit-x/internal/model"
@@ -204,7 +205,7 @@ func (s *UIService) BuildInvestasiModal(state model.TransactionState, currentTar
 		Type:            slack.VTModal,
 		Title:           txt(title),
 		Close:           txt("Kembali"),
-		Submit:          txt("Simpan"),
+		Submit:          txt("Review & Simpan ❯"),
 		CallbackID:      "investasi_entry_modal",
 		PrivateMetadata: string(stateJSON),
 		Blocks: slack.Blocks{
@@ -252,7 +253,7 @@ func (s *UIService) BuildPanenModal(state model.TransactionState, crew []model.C
 		Type:            slack.VTModal,
 		Title:           txt("🌾 Modul Panen"),
 		Close:           txt("Kembali"),
-		Submit:          txt("Simpan"),
+		Submit:          txt("Review & Simpan ❯"),
 		CallbackID:      "panen_entry_modal",
 		PrivateMetadata: string(stateJSON),
 		Blocks: slack.Blocks{
@@ -344,7 +345,7 @@ func (s *UIService) BuildOperasionalModal(state model.TransactionState, categori
 		Type:            slack.VTModal,
 		Title:           txt("💰 Operasional"),
 		Close:           txt("Kembali"),
-		Submit:          txt("Simpan"),
+		Submit:          txt("Review & Simpan ❯"),
 		CallbackID:      "operasional_entry_modal",
 		PrivateMetadata: string(stateJSON),
 		Blocks: slack.Blocks{
@@ -436,7 +437,7 @@ func (s *UIService) BuildPiutangActionModal(state model.TransactionState, crewNa
 		Type:            slack.VTModal,
 		Title:           txt("📋 Piutang"),
 		Close:           txt("Batal"),
-		Submit:          txt("Simpan"),
+		Submit:          txt("Review & Simpan ❯"),
 		CallbackID:      "piutang_action_modal",
 		PrivateMetadata: string(stateJSON),
 		Blocks: slack.Blocks{
@@ -1746,4 +1747,132 @@ func (s *UIService) BuildSiteArchivedMessage(siteName, date string) slack.Messag
 		},
 	}
 }
+
+// BuildTransactionConfirmModal builds a review and confirmation modal before writing transaction to Sheets.
+func (s *UIService) BuildTransactionConfirmModal(entry model.LogEntry) slack.ModalViewRequest {
+	entryJSON, _ := json.Marshal(entry)
+
+	var icon, title, moduleName string
+	var fields []*slack.TextBlockObject
+	var extraBlocks []slack.Block
+
+	dateStr := entry.EventDate.Format("02 Jan 2006")
+
+	switch entry.ModuleType {
+	case model.ModulePanen:
+		icon = "🌾"
+		title = "Konfirmasi Panen"
+		moduleName = "Panen TBS"
+
+		fields = []*slack.TextBlockObject{
+			md(fmt.Sprintf("*Modul:*\n%s %s", icon, moduleName)),
+			md(fmt.Sprintf("*Tanggal:*\n📅 %s", dateStr)),
+			md(fmt.Sprintf("*Lokasi Kebun:*\n🌴 %s", entry.SiteName)),
+			md(fmt.Sprintf("*Pemanen:*\n👨‍🌾 %s", entry.CrewName)),
+			md(fmt.Sprintf("*Berat Panen:*\n⚖️ %s Kg", formatRupiah(entry.Weight))),
+			md(fmt.Sprintf("*Harga per Kg:*\n💵 Rp%s / Kg", formatRupiah(entry.UnitPrice))),
+			md(fmt.Sprintf("*Gross Income:*\n💰 Rp%s", formatRupiah(entry.AmountRaw))),
+			md(fmt.Sprintf("*Net Profit:*\n✨ *Rp%s*", formatRupiah(entry.AmountFinal))),
+		}
+
+		extraBlocks = append(extraBlocks, slack.NewContextBlock("", md(fmt.Sprintf(
+			"🚚 _Biaya: Upah Rp%s | Transport/Bensin Rp%s (Dipotong dari Gross)_",
+			formatRupiah(entry.LaborCost), formatRupiah(entry.TransportCost),
+		))))
+
+	case model.ModuleOperasional:
+		icon = "💸"
+		title = "Konfirmasi Operasional"
+		moduleName = "Operasional Kebun"
+
+		fields = []*slack.TextBlockObject{
+			md(fmt.Sprintf("*Modul:*\n%s %s", icon, moduleName)),
+			md(fmt.Sprintf("*Tanggal:*\n📅 %s", dateStr)),
+			md(fmt.Sprintf("*Lokasi Kebun:*\n🌴 %s", entry.SiteName)),
+			md(fmt.Sprintf("*Kategori:*\n🏷️ %s", entry.CategoryName)),
+			md(fmt.Sprintf("*Penanggung Jawab:*\n👤 %s", entry.CrewName)),
+			md(fmt.Sprintf("*Nominal Biaya:*\n*Rp%s*", formatRupiah(entry.AmountRaw))),
+		}
+
+	case model.ModulePiutang:
+		icon = "📋"
+		title = "Konfirmasi Piutang"
+		moduleName = "Piutang / Kasbon"
+
+		actionLabel := "💸 Pinjam (Kasbon Baru)"
+		if entry.CategoryID == "BAYAR" {
+			actionLabel = "✅ Bayar / Potong Kasbon"
+		}
+
+		fields = []*slack.TextBlockObject{
+			md(fmt.Sprintf("*Modul:*\n%s %s", icon, moduleName)),
+			md(fmt.Sprintf("*Tanggal:*\n📅 %s", dateStr)),
+			md(fmt.Sprintf("*Lokasi Kebun:*\n🌴 %s", entry.SiteName)),
+			md(fmt.Sprintf("*Pegawai:*\n👤 %s", entry.CrewName)),
+			md(fmt.Sprintf("*Jenis Transaksi:*\n%s", actionLabel)),
+			md(fmt.Sprintf("*Nominal Transaksi:*\n*Rp%s*", formatRupiah(entry.AmountRaw))),
+			md(fmt.Sprintf("*Saldo Akhir Kasbon:*\n*Rp%s*", formatRupiah(entry.AmountFinal))),
+		}
+
+	case model.ModuleInvestasi:
+		icon = "🚀"
+		title = "Konfirmasi Investasi"
+		moduleName = "Update Modal Awal"
+
+		fields = []*slack.TextBlockObject{
+			md(fmt.Sprintf("*Modul:*\n%s %s", icon, moduleName)),
+			md(fmt.Sprintf("*Tanggal:*\n📅 %s", dateStr)),
+			md(fmt.Sprintf("*Lokasi Kebun:*\n🌴 %s", entry.SiteName)),
+			md(fmt.Sprintf("*Target Modal Baru:*\n*Rp%s*", formatRupiah(entry.AmountRaw))),
+		}
+
+	default:
+		icon = "📝"
+		title = "Konfirmasi Transaksi"
+		moduleName = entry.ModuleType
+		fields = []*slack.TextBlockObject{
+			md(fmt.Sprintf("*Modul:*\n%s", moduleName)),
+			md(fmt.Sprintf("*Tanggal:*\n%s", dateStr)),
+			md(fmt.Sprintf("*Kebun:*\n%s", entry.SiteName)),
+			md(fmt.Sprintf("*Nominal:*\nRp%s", formatRupiah(entry.AmountRaw))),
+		}
+	}
+
+	blocks := []slack.Block{
+		slack.NewHeaderBlock(txt(fmt.Sprintf("🔎 %s", title))),
+		slack.NewSectionBlock(
+			md("⚠️ *Mohon periksa kembali rincian data sebelum disimpan ke Google Sheets:*\n_Jika ada kesalahan ketik, klik *Kembali* di pojok bawah/kiri untuk mengubah isian._"),
+			nil, nil,
+		),
+		slack.NewDividerBlock(),
+		slack.NewSectionBlock(nil, fields, nil),
+	}
+
+	blocks = append(blocks, extraBlocks...)
+
+	if strings.TrimSpace(entry.Notes) != "" {
+		blocks = append(blocks,
+			slack.NewDividerBlock(),
+			slack.NewSectionBlock(md(fmt.Sprintf("*Catatan / Keterangan:*\n_%s_", entry.Notes)), nil, nil),
+		)
+	}
+
+	blocks = append(blocks,
+		slack.NewDividerBlock(),
+		slack.NewContextBlock("", md("💡 _Klik *Ya, Simpan ke Sheets* untuk finalisasi atau *Kembali* untuk merevisi._")),
+	)
+
+	return slack.ModalViewRequest{
+		Type:            slack.VTModal,
+		Title:           txt("🔎 Konfirmasi Data"),
+		Close:           txt("Kembali"),
+		Submit:          txt("✅ Ya, Simpan ke Sheets"),
+		CallbackID:      "transaction_confirm_modal",
+		PrivateMetadata: string(entryJSON),
+		Blocks: slack.Blocks{
+			BlockSet: blocks,
+		},
+	}
+}
+
 

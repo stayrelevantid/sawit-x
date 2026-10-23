@@ -1549,3 +1549,147 @@ func TestBuildSiteSelectionModal_HasViewArchiveButton(t *testing.T) {
 		t.Errorf("site selection modal should contain btn_view_archived_sites button")
 	}
 }
+
+func TestBuildTransactionConfirmModal_Panen(t *testing.T) {
+	uis := service.NewUIService()
+	entry := model.LogEntry{
+		LogID:         "test-uuid-1",
+		Timestamp:     time.Now(),
+		EventDate:     time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
+		ModuleType:    model.ModulePanen,
+		SiteID:        "SITE_001",
+		SiteName:      "Kebun Induk",
+		CategoryID:    "PANEN",
+		CategoryName:  "Panen TBS",
+		CrewID:        "CREW_001",
+		CrewName:      "Budi",
+		Weight:        1500,
+		UnitPrice:     2500,
+		AmountRaw:     3750000,
+		AmountFinal:   3300000,
+		LaborCost:     300000,
+		TransportCost: 150000,
+		Notes:         "Panen blok A",
+	}
+
+	modal := uis.BuildTransactionConfirmModal(entry)
+	if modal.CallbackID != "transaction_confirm_modal" {
+		t.Errorf("expected callback ID transaction_confirm_modal, got %s", modal.CallbackID)
+	}
+	if modal.Submit.Text != "✅ Ya, Simpan ke Sheets" {
+		t.Errorf("expected submit text '✅ Ya, Simpan ke Sheets', got %s", modal.Submit.Text)
+	}
+	if modal.Close.Text != "Kembali" {
+		t.Errorf("expected close text 'Kembali', got %s", modal.Close.Text)
+	}
+
+	rawJSON, _ := json.Marshal(modal)
+	str := string(rawJSON)
+	if !strings.Contains(str, "Panen TBS") {
+		t.Errorf("expected modal to mention Panen TBS")
+	}
+	if !strings.Contains(str, "3.750.000") {
+		t.Errorf("expected modal to mention Gross Income")
+	}
+	if !strings.Contains(str, "3.300.000") {
+		t.Errorf("expected modal to mention Net Profit")
+	}
+	if !strings.Contains(str, "Panen blok A") {
+		t.Errorf("expected modal to mention notes")
+	}
+}
+
+func TestBuildTransactionConfirmModal_Operasional(t *testing.T) {
+	uis := service.NewUIService()
+	entry := model.LogEntry{
+		LogID:        "test-uuid-2",
+		Timestamp:    time.Now(),
+		EventDate:    time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
+		ModuleType:   model.ModuleOperasional,
+		SiteID:       "SITE_001",
+		SiteName:     "Kebun Induk",
+		CategoryID:   "CAT_PUPUK",
+		CategoryName: "Pupuk NPK",
+		CrewID:       "CREW_002",
+		CrewName:     "Slamet",
+		AmountRaw:    750000,
+		AmountFinal:  750000,
+		Notes:        "Beli 3 karung pupuk",
+	}
+
+	modal := uis.BuildTransactionConfirmModal(entry)
+	rawJSON, _ := json.Marshal(modal)
+	str := string(rawJSON)
+	if !strings.Contains(str, "Operasional Kebun") {
+		t.Errorf("expected modal to mention Operasional Kebun")
+	}
+	if !strings.Contains(str, "Pupuk NPK") {
+		t.Errorf("expected modal to mention category")
+	}
+	if !strings.Contains(str, "750.000") {
+		t.Errorf("expected modal to mention nominal")
+	}
+}
+
+func TestBuildTransactionConfirmModal_Piutang(t *testing.T) {
+	uis := service.NewUIService()
+	entry := model.LogEntry{
+		LogID:        "test-uuid-3",
+		Timestamp:    time.Now(),
+		EventDate:    time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
+		ModuleType:   model.ModulePiutang,
+		SiteID:       "SITE_001",
+		SiteName:     "Kebun Induk",
+		CategoryID:   "PINJAM",
+		CategoryName: "Pinjam Kasbon",
+		CrewID:       "CREW_003",
+		CrewName:     "Joko",
+		AmountRaw:    200000,
+		AmountFinal:  500000,
+		Notes:        "Pinjaman kasbon mingguan",
+	}
+
+	modal := uis.BuildTransactionConfirmModal(entry)
+	rawJSON, _ := json.Marshal(modal)
+	str := string(rawJSON)
+	if !strings.Contains(str, "Piutang / Kasbon") {
+		t.Errorf("expected modal to mention Piutang / Kasbon")
+	}
+	if !strings.Contains(str, "Kasbon Baru") {
+		t.Errorf("expected modal to mention Kasbon Baru")
+	}
+	if !strings.Contains(str, "200.000") {
+		t.Errorf("expected modal to mention nominal")
+	}
+	if !strings.Contains(str, "500.000") {
+		t.Errorf("expected modal to mention ending balance")
+	}
+}
+
+func TestBuildTransactionConfirmModal_Investasi(t *testing.T) {
+	uis := service.NewUIService()
+	entry := model.LogEntry{
+		LogID:        "test-uuid-4",
+		Timestamp:    time.Now(),
+		EventDate:    time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
+		ModuleType:   model.ModuleInvestasi,
+		SiteID:       "SITE_001",
+		SiteName:     "Kebun Induk",
+		CategoryID:   "UPDATE_CAPITAL",
+		CategoryName: "Update Modal Lahan",
+		AmountRaw:    150000000,
+		AmountFinal:  150000000,
+		Notes:        "Beli lahan tambahan",
+	}
+
+	modal := uis.BuildTransactionConfirmModal(entry)
+	rawJSON, _ := json.Marshal(modal)
+	str := string(rawJSON)
+	if !strings.Contains(str, "Update Modal Awal") {
+		t.Errorf("expected modal to mention Update Modal Awal")
+	}
+	if !strings.Contains(str, "150.000.000") {
+		t.Errorf("expected modal to mention target modal baru")
+	}
+}
+

@@ -158,11 +158,27 @@ Net_Income   = Gross_Income − (Upah_Panen + Bensin)
 
 ---
 
-### Step 6 — Konfirmasi & DM
+### Step 6 — Review & Konfirmasi Simpan (`transaction_confirm_modal`)
 
-Setelah submit tiap modul:
-1. Respon Slack: **Clear modal** (modal tertutup otomatis).
-2. Background: Bot kirim **DM konfirmasi** ke user.
+Sebelum transaksi disimpan ke buku besar Google Sheets, sistem menampilkan modal konfirmasi (push view) untuk mencegah kesalahan input / salah pencet:
+
+**UI Slack (Modal Konfirmasi):**
+- Header: *"🔎 Konfirmasi [Nama Modul]"*
+- Tampilan Data Review:
+  - Modul, Tanggal, Lokasi Kebun, Pegawai/Kategori
+  - Rincian Angka: Berat, Harga/Kg, Gross, Upah, Transport, Net Profit (Panen) / Nominal & Kategori (Ops) / Pinjam/Bayar & Saldo (Piutang) / Target Modal (Investasi)
+  - Catatan / Keterangan
+- Tombol:
+  - **[Kembali]**: Menutup modal konfirmasi dan kembali ke form entri dengan data isian tetap utuh.
+  - **[✅ Ya, Simpan ke Sheets]**: Menyimpan transaksi ke Google Sheets.
+
+**System Logic:**
+1. Klik **[Kembali]**: Slack menutup modal konfirmasi dan kembali ke form transaksi.
+2. Klik **[✅ Ya, Simpan ke Sheets]**:
+   - Backend memvalidasi dan memproses transaksi ke `X_LOG` (dan update target di `Sites` untuk Investasi).
+   - Sinkronisasi otomatis ke tab `X_REKAP`.
+   - Slack Response: **Clear modal** (seluruh modal tertutup otomatis).
+   - Bot mengirimkan **Pesan Konfirmasi (Success DM)** ke user dan channel.
 
 **Contoh DM Panen:**
 ```
@@ -175,9 +191,6 @@ Berat: 1250 Kg
 Gross: Rp3.000.000
 Net:   Rp2.750.000
 ```
-
-3. Response Slack: **Clear modal** (modal tertutup otomatis).
-4. Bot mengirimkan **Pesan Konfirmasi (Success DM)** ke user berisi ringkasan data yang baru dimasukkan + perhitungan otomatisnya.
 
 ---
 
@@ -249,17 +262,13 @@ mode_selection_modal (Aktif)                        mode_selection_modal (Read-O
     ├── [✍️ Pencatatan Baru]                                  └── Fitur Rekap & Riwayat Saja
     │        ▼                                                   (Pencatatan & Arsip disembunyikan)
     │   module_selection_modal
-    │        ├── PANEN       ──▶ panen_entry_modal
-    │        │                        └── WriteLog (X_LOG)
-    │        ├── OPERASIONAL ──▶ operasional_entry_modal
-    │        │                        └── WriteLog (X_LOG)
+    │        ├── PANEN       ──▶ panen_entry_modal       ──▶ transaction_confirm_modal ──▶ WriteLog (X_LOG)
+    │        ├── OPERASIONAL ──▶ operasional_entry_modal ──▶ transaction_confirm_modal ──▶ WriteLog (X_LOG)
     │        ├── PIUTANG     ──▶ piutang_crew_select_modal
     │        │                        │  GetCrewBalance (X_LOG)
     │        │                        ▼
-    │        │                   piutang_action_modal
-    │        │                        └── WriteLog (X_LOG)
-    │        └── INVESTASI   ──▶ investasi_entry_modal
-    │                                 └── WriteLog (X_LOG)
+    │        │                   piutang_action_modal    ──▶ transaction_confirm_modal ──▶ WriteLog (X_LOG)
+    │        └── INVESTASI   ──▶ investasi_entry_modal   ──▶ transaction_confirm_modal ──▶ UpdateSiteTarget & WriteLog (X_LOG)
     │
     ├── [📊 Rekap & Riwayat] ──▶ view_report, panen, kasbon, pupuk, etc.
     │

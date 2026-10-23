@@ -70,6 +70,8 @@ func (h *SlackInteractionsHandler) handleViewSubmission(w http.ResponseWriter, r
 		h.handlePiutangAction(w, r, payload)
 	case "investasi_entry_modal":
 		h.handleInvestasiEntry(w, r, payload)
+	case "transaction_confirm_modal":
+		h.handleTransactionConfirm(w, r, payload)
 	case "add_site_modal":
 		h.handleAddSiteSubmit(w, r, payload)
 	case "add_crew_modal":
@@ -628,26 +630,8 @@ func (h *SlackInteractionsHandler) handlePanenEntry(w http.ResponseWriter, r *ht
 		return
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[PANEN] Error writing log: %v", err)
-		respondWithErrors(w, "weight_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
-		return
-	}
-
-	// Sync to X_REKAP with timeout
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
-		if err != nil {
-			log.Printf("[PANEN] Failed to get site report for %s: %v", state.SiteID, err)
-			return
-		}
-		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
-	}()
-
-	respondClear(w)
-	go h.sendSuccessNotification(payload.User.ID, entry)
+	modal := h.uiService.BuildTransactionConfirmModal(entry)
+	respondWithPushView(w, modal)
 }
 
 // --- Step 3b: Operasional Entry ---
@@ -708,26 +692,8 @@ func (h *SlackInteractionsHandler) handleOperasionalEntry(w http.ResponseWriter,
 		return
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[OPERASIONAL] Error writing log: %v", err)
-		respondWithErrors(w, "amount_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
-		return
-	}
-
-	// Sync to X_REKAP with timeout
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
-		if err != nil {
-			log.Printf("[OPERASIONAL] Failed to get site report for %s: %v", state.SiteID, err)
-			return
-		}
-		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
-	}()
-
-	respondClear(w)
-	go h.sendSuccessNotification(payload.User.ID, entry)
+	modal := h.uiService.BuildTransactionConfirmModal(entry)
+	respondWithPushView(w, modal)
 }
 
 // --- Step 3c-1: Piutang — Crew Selection ---
@@ -822,26 +788,8 @@ func (h *SlackInteractionsHandler) handlePiutangAction(w http.ResponseWriter, r 
 		return
 	}
 
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[PIUTANG] Error writing log: %v", err)
-		respondWithErrors(w, "amount_block", "Gagal menyimpan transaksi ke Google Sheets: "+err.Error())
-		return
-	}
-
-	// Sync to X_REKAP with timeout
-	go func() {
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
-		if err != nil {
-			log.Printf("[PIUTANG] Failed to get site report for %s: %v", state.SiteID, err)
-			return
-		}
-		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
-	}()
-
-	respondClear(w)
-	go h.sendSuccessNotification(payload.User.ID, entry)
+	modal := h.uiService.BuildTransactionConfirmModal(entry)
+	respondWithPushView(w, modal)
 }
 
 // --- Helpers ---
@@ -870,6 +818,18 @@ func respondWithUpdateView(w http.ResponseWriter, modal slack.ModalViewRequest) 
 		View           slack.ModalViewRequest `json:"view"`
 	}{
 		ResponseAction: "update",
+		View:           modal,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func respondWithPushView(w http.ResponseWriter, modal slack.ModalViewRequest) {
+	resp := struct {
+		ResponseAction string                 `json:"response_action"`
+		View           slack.ModalViewRequest `json:"view"`
+	}{
+		ResponseAction: "push",
 		View:           modal,
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -965,34 +925,8 @@ func (h *SlackInteractionsHandler) handleInvestasiEntry(w http.ResponseWriter, r
 		return
 	}
 
-	// 1. Update direct site capital in MASTER sheet
-	if err := h.masterDataService.UpdateSiteTarget(ctx, state.SiteID, amount); err != nil {
-		log.Printf("[INVESTASI] Error updating site target: %v", err)
-		respondWithErrors(w, "amount_block", "Gagal memperbarui target modal di sheet master: "+err.Error())
-		return
-	}
-
-	// 2. Log the change to X_LOG for audit trail
-	if err := h.logService.WriteLog(ctx, entry); err != nil {
-		log.Printf("[INVESTASI] Error writing audit log: %v", err)
-		respondWithErrors(w, "amount_block", "Gagal mencatat log investasi ke Google Sheets: "+err.Error())
-		return
-	}
-
-	// Success Response & Sync with timeout
-	go func() {
-		h.sendSuccessNotification(payload.User.ID, entry)
-		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		report, err := h.masterDataService.GetSiteReport(bgCtx, state.SiteID)
-		if err != nil {
-			log.Printf("[INVESTASI] Failed to get site report for %s: %v", state.SiteID, err)
-			return
-		}
-		h.syncRekap(bgCtx, state.SiteID, state.SiteName, report)
-	}()
-
-	respondClear(w)
+	modal := h.uiService.BuildTransactionConfirmModal(entry)
+	respondWithPushView(w, modal)
 }
 
 func (h *SlackInteractionsHandler) syncRekap(ctx context.Context, siteID string, siteName string, report model.SiteReport) {
@@ -1000,6 +934,61 @@ func (h *SlackInteractionsHandler) syncRekap(ctx context.Context, siteID string,
 		log.Printf("[REKAP] Failed to sync to X_REKAP: %v", err)
 	}
 }
+
+// handleTransactionConfirm finalizes and writes transaction to Google Sheets after user confirms.
+func (h *SlackInteractionsHandler) handleTransactionConfirm(w http.ResponseWriter, r *http.Request, payload slack.InteractionCallback) {
+	ctx := r.Context()
+
+	var entry model.LogEntry
+	if err := json.Unmarshal([]byte(payload.View.PrivateMetadata), &entry); err != nil {
+		log.Printf("[CONFIRM] Error unmarshalling log entry: %v", err)
+		respondClear(w)
+		return
+	}
+
+	// If Investasi, update direct site capital in MASTER sheet first
+	if entry.ModuleType == model.ModuleInvestasi {
+		if err := h.masterDataService.UpdateSiteTarget(ctx, entry.SiteID, entry.AmountRaw); err != nil {
+			log.Printf("[CONFIRM] Error updating site target for %s: %v", entry.SiteID, err)
+			respondClear(w)
+			go func() {
+				errMsg := fmt.Sprintf("❌ Gagal memperbarui target modal di sheet master: %v", err)
+				_, _, _ = h.slackClient.PostMessage(payload.User.ID, slack.MsgOptionText(errMsg, false))
+			}()
+			return
+		}
+	}
+
+	// Write log to X_LOG
+	if err := h.logService.WriteLog(ctx, entry); err != nil {
+		log.Printf("[CONFIRM] Error writing log for %s: %v", entry.ModuleType, err)
+		respondClear(w)
+		go func() {
+			errMsg := fmt.Sprintf("❌ Gagal menyimpan transaksi *%s* ke Google Sheets: %v", entry.ModuleType, err)
+			_, _, _ = h.slackClient.PostMessage(payload.User.ID, slack.MsgOptionText(errMsg, false))
+		}()
+		return
+	}
+
+	// Sync to X_REKAP with timeout
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		report, err := h.masterDataService.GetSiteReport(bgCtx, entry.SiteID)
+		if err != nil {
+			log.Printf("[CONFIRM] Failed to get site report for %s: %v", entry.SiteID, err)
+			return
+		}
+		h.syncRekap(bgCtx, entry.SiteID, entry.SiteName, report)
+	}()
+
+	// Close all modals in the stack
+	respondClear(w)
+
+	// Send success notification to DM and channel
+	go h.sendSuccessNotification(payload.User.ID, entry)
+}
+
 
 func parseAmount(s string) (int64, error) {
 	s = strings.ReplaceAll(s, ".", "")

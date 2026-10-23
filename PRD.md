@@ -309,6 +309,13 @@ Menangani semua interaction dari modal Slack:
 - [x] Slack Interaction Handler: flow arsipkan kebun dengan konfirmasi, pencegahan mutasi baru pada kebun terarsip, dan notifikasi DM & channel.
 - [x] Unit test komprehensif untuk seluruh fungsionalitas archive.
 
+### Fase 8: Save Confirmation Modal ✅
+- [x] Push modal konfirmasi review (`transaction_confirm_modal`) untuk 4 modul transaksi utama (Panen, Operasional, Piutang, Investasi).
+- [x] Tombol "Review & Simpan ❯" pada entry form untuk alur yang lebih intuitif.
+- [x] Preview data transaksi lengkap dengan kalkulasi sebelum data ditulis ke Google Sheets.
+- [x] Mekanisme pop modal ("Kembali") untuk mengedit data tanpa kehilangan isian form, dan finalisasi simpan ("Ya, Simpan ke Sheets") dengan pembersihan modal stack.
+- [x] Unit test komprehensif untuk seluruh modal konfirmasi transaksi.
+
 ---
 
 ## 8. Struktur Repository
